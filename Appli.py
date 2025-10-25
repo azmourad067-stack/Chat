@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import os
 import re
 import warnings
@@ -169,7 +171,8 @@ class GenyScraper:
                     st.warning(f"Erreur lors du parsing d'une ligne de tableau : {e}")
                     continue
 
-        if horses :
+        # ✅ CORRECTION ICI : "if horses_data:" au lieu de "if horses_"
+        if horses_data:
             df = pd.DataFrame(horses_data)
             # Supprimer les doublons éventuels (plusieurs courses = mêmes numéros)
             df = df.drop_duplicates(subset=['Nom', 'Numéro de corde']).reset_index(drop=True)
@@ -190,10 +193,9 @@ class GenyScraper:
         horses_data = []
         text_content = soup.get_text()
         
-        # Expressions régulières pour détecter les chevaux
         horse_patterns = [
-            r'(\d+)\s+([A-Z][a-zA-ZÀ-ÿ\s\-\.\']+?)\s+(\d+\.\d+)',  # Numéro + Nom + Cote
-            r'([A-Z][a-zA-ZÀ-ÿ\s\-\.\']+?)\s+(\d+\.\d+)',  # Nom + Cote
+            r'(\d+)\s+([A-Z][a-zA-ZÀ-ÿ\s\-\.\']+?)\s+(\d+\.\d+)',
+            r'([A-Z][a-zA-ZÀ-ÿ\s\-\.\']+?)\s+(\d+\.\d+)',
         ]
         
         for pattern in horse_patterns:
@@ -212,7 +214,7 @@ class GenyScraper:
                 }
                 horses_data.append(horse_data)
         
-        if horses :
+        if horses_data:
             return pd.DataFrame(horses_data)
         else:
             st.warning("Aucun cheval détecté, utilisation des données de démonstration")
@@ -241,7 +243,7 @@ class GenyScraper:
         ]
         
         np.random.shuffle(demo_horses)
-        selected_horses = demo_horses[:8]  # 8 chevaux max
+        selected_horses = demo_horses[:8]
         
         demo_data = []
         for i, name in enumerate(selected_horses, 1):
@@ -261,64 +263,39 @@ class GenyScraper:
 
 # ---------------- Feature Engineering ----------------
 class AdvancedFeatureEngineer:
-    """Génération de features avancées"""
-    
     def __init__(self):
         pass
         
     def create_advanced_features(self, df):
-        """Crée des features avancées"""
         df = df.copy()
-        
-        # Features de base
         df = self._create_basic_features(df)
-        
-        # Features de performance
         df = self._create_performance_features(df)
-        
-        # Features contextuelles
         df = self._create_contextual_features(df)
-        
         return df
     
     def _create_basic_features(self, df):
-        """Features de base"""
         df['odds_numeric'] = df['Cote'].apply(lambda x: float(x) if pd.notna(x) else 10.0)
         df['odds_probability'] = 1 / df['odds_numeric']
         df['draw_numeric'] = df['Numéro de corde'].apply(lambda x: int(x) if str(x).isdigit() else 1)
         df['weight_kg'] = df['Poids'].apply(lambda x: float(x) if pd.notna(x) else 60.0)
-        
-        # Age et sexe
         df['age'] = df['Âge/Sexe'].apply(lambda x: self._extract_age(x))
         df['is_female'] = df['Âge/Sexe'].apply(lambda x: 1 if 'F' in str(x).upper() else 0)
-        
         return df
     
     def _create_performance_features(self, df):
-        """Features de performance"""
-        # Analyse musique
         df['recent_wins'] = df['Musique'].apply(lambda x: self._extract_recent_wins(x))
         df['recent_top3'] = df['Musique'].apply(lambda x: self._extract_recent_top3(x))
         df['recent_weighted'] = df['Musique'].apply(lambda x: self._calculate_weighted_perf(x))
         df['consistency'] = df['recent_top3'] / (df['recent_wins'] + df['recent_top3'] + 1e-6)
-        
         return df
     
     def _create_contextual_features(self, df):
-        """Features contextuelles"""
-        # Expérience basée sur l'âge
         df['experience'] = df['age'] - 3
-        
-        # Prime age (4-6 ans)
         df['prime_age'] = ((df['age'] >= 4) & (df['age'] <= 6)).astype(int)
-        
-        # Poids normalisé
         df['weight_normalized'] = (df['weight_kg'] - df['weight_kg'].mean()) / df['weight_kg'].std()
-        
         return df
     
     def _extract_age(self, age_sexe):
-        """Extrait l'âge"""
         try:
             m = re.search(r"(\d+)", str(age_sexe))
             return float(m.group(1)) if m else 5.0
@@ -326,7 +303,6 @@ class AdvancedFeatureEngineer:
             return 5.0
     
     def _extract_recent_wins(self, musique):
-        """Extrait les victoires récentes"""
         try:
             s = str(musique)
             digits = [int(x) for x in re.findall(r"\d+", s) if int(x) > 0]
@@ -335,7 +311,6 @@ class AdvancedFeatureEngineer:
             return 0
     
     def _extract_recent_top3(self, musique):
-        """Extrait les top3 récents"""
         try:
             s = str(musique)
             digits = [int(x) for x in re.findall(r"\d+", s) if int(x) > 0]
@@ -344,7 +319,6 @@ class AdvancedFeatureEngineer:
             return 0
     
     def _calculate_weighted_perf(self, musique):
-        """Calcule la performance pondérée"""
         try:
             s = str(musique)
             digits = [int(x) for x in re.findall(r"\d+", s) if int(x) > 0]
@@ -358,8 +332,6 @@ class AdvancedFeatureEngineer:
 
 # ---------------- Modèle Hybride ----------------
 class AdvancedHybridModel:
-    """Système de modélisation avancé"""
-    
     def __init__(self, feature_cols=None):
         self.feature_cols = feature_cols or [
             'odds_numeric', 'draw_numeric', 'weight_kg', 'age', 'is_female',
@@ -370,7 +342,6 @@ class AdvancedHybridModel:
         self.model = None
     
     def train_ensemble(self, X, y, val_split=0.2):
-        """Entraîne le modèle"""
         try:
             X_scaled = self.scaler.fit_transform(X)
             
@@ -384,7 +355,6 @@ class AdvancedHybridModel:
                 self.model.fit(X_scaled, y)
                 st.success("✅ Modèle XGBoost entraîné avec succès")
             else:
-                # Fallback vers Random Forest
                 from sklearn.ensemble import RandomForestRegressor
                 self.model = RandomForestRegressor(n_estimators=50, random_state=42)
                 self.model.fit(X_scaled, y)
@@ -394,7 +364,6 @@ class AdvancedHybridModel:
             st.warning(f"⚠️ Erreur entraînement: {e}")
     
     def predict_proba(self, X):
-        """Prédictions de probabilité"""
         try:
             if self.model is None:
                 return np.zeros(len(X))
@@ -402,7 +371,6 @@ class AdvancedHybridModel:
             X_scaled = self.scaler.transform(X)
             predictions = self.model.predict(X_scaled)
             
-            # Normalisation pour avoir des probabilités
             if predictions.max() > predictions.min():
                 predictions = (predictions - predictions.min()) / (predictions.max() - predictions.min())
             
@@ -414,13 +382,10 @@ class AdvancedHybridModel:
 
 # ---------------- Value Bet Detector ----------------
 class ValueBetDetector:
-    """Détection des value bets"""
-    
     def __init__(self, edge_threshold=0.05):
         self.edge_threshold = edge_threshold
     
     def find_value_bets(self, df, predicted_probs, min_prob=0.1):
-        """Identifie les value bets"""
         value_bets = []
         
         for idx, row in df.iterrows():
@@ -445,7 +410,6 @@ class ValueBetDetector:
         return pd.DataFrame(value_bets).sort_values('edge', ascending=False)
 
     def calculate_kelly_fraction(self, prob, odds):
-        """Calcule la fraction Kelly"""
         if odds <= 1:
             return 0.0
         kelly = (prob * (odds - 1) - (1 - prob)) / (odds - 1)
@@ -453,7 +417,6 @@ class ValueBetDetector:
 
 # ---------------- Interface Streamlit ----------------
 def setup_streamlit_ui():
-    """Configure l'interface Streamlit"""
     st.set_page_config(
         page_title="🏇 Système Expert Hippique Pro",
         layout="wide",
@@ -485,13 +448,11 @@ def setup_streamlit_ui():
     """, unsafe_allow_html=True)
 
 def main():
-    """Fonction principale"""
     setup_streamlit_ui()
     
     st.markdown('<h1 class="main-header">🏇 SYSTÈME EXPERT HIPPIQUE PROFESSIONNEL</h1>', 
                 unsafe_allow_html=True)
     
-    # Sidebar
     with st.sidebar:
         st.header("🎯 Configuration Pro")
         
@@ -515,7 +476,6 @@ def main():
         
         st.info("💡 **Tips:**\n- Utilisez les URLs Geny 'partants-pmu'\n- Le système fonctionne même sans connexion")
 
-    # Onglets principaux
     tab1, tab2, tab3 = st.tabs(["📊 Course Actuelle", "🎯 Value Bets", "📈 Performance"])
     
     with tab1:
@@ -528,36 +488,30 @@ def main():
         display_performance_analysis()
 
 def display_current_race_analysis(url_input, auto_train, use_advanced_features, detect_value_bets, edge_threshold):
-    """Affiche l'analyse de la course actuelle"""
     st.header("📊 Analyse Détaillée de la Course")
     
     if st.button("🚀 Lancer l'Analyse", type="primary", use_container_width=True):
         with st.spinner("Analyse en cours..."):
             try:
-                # Scraping des données
                 scraper = GenyScraper()
                 df_race = scraper.scrape_geny_course(url_input)
                 
                 if not df_race.empty:
                     st.success(f"✅ {len(df_race)} chevaux chargés avec succès")
                     
-                    # Affichage données brutes
                     with st.expander("📋 Données brutes scrapées", expanded=True):
                         st.dataframe(df_race, use_container_width=True)
                     
-                    # Feature engineering
                     feature_engineer = AdvancedFeatureEngineer()
                     if use_advanced_features:
                         df_features = feature_engineer.create_advanced_features(df_race)
                     else:
                         df_features = create_basic_features(df_race)
                     
-                    # Affichage features
                     with st.expander("🔧 Features calculées", expanded=False):
                         feature_cols = [col for col in df_features.columns if col not in ['Nom', 'Jockey', 'Entraîneur', 'Musique', 'Âge/Sexe']]
                         st.dataframe(df_features[['Nom'] + feature_cols], use_container_width=True)
                     
-                    # Entraînement et prédictions
                     if auto_train and len(df_features) >= 3:
                         model = AdvancedHybridModel()
                         X, y = prepare_training_data(df_features)
@@ -568,13 +522,11 @@ def display_current_race_analysis(url_input, auto_train, use_advanced_features, 
                             df_features['predicted_prob'] = predictions
                             df_features['value_score'] = predictions / (1/df_features['odds_numeric'])
                             
-                            # Value bets detection
                             value_bets_df = None
                             if detect_value_bets:
                                 value_detector = ValueBetDetector(edge_threshold=edge_threshold)
                                 value_bets_df = value_detector.find_value_bets(df_features, predictions)
                             
-                            # Affichage résultats
                             display_race_results(df_features, value_bets_df)
                         else:
                             st.warning("Données insuffisantes pour l'entraînement")
@@ -585,7 +537,6 @@ def display_current_race_analysis(url_input, auto_train, use_advanced_features, 
                 st.error(f"❌ Erreur lors de l'analyse: {str(e)}")
 
 def create_basic_features(df):
-    """Crée les features de base"""
     df = df.copy()
     df['odds_numeric'] = df['Cote']
     df['draw_numeric'] = df['Numéro de corde'].apply(lambda x: int(x) if str(x).isdigit() else 1)
@@ -598,7 +549,6 @@ def create_basic_features(df):
     return df
 
 def extract_age_simple(age_sexe):
-    """Extrait l'âge simplement"""
     try:
         m = re.search(r'(\d+)', str(age_sexe))
         return float(m.group(1)) if m else 5.0
@@ -606,7 +556,6 @@ def extract_age_simple(age_sexe):
         return 5.0
 
 def extract_recent_wins_simple(musique):
-    """Extrait les victoires récentes simplement"""
     try:
         s = str(musique)
         digits = [int(x) for x in re.findall(r'\d+', s) if int(x) > 0]
@@ -615,7 +564,6 @@ def extract_recent_wins_simple(musique):
         return 0
 
 def extract_recent_top3_simple(musique):
-    """Extrait les top3 récents simplement"""
     try:
         s = str(musique)
         digits = [int(x) for x in re.findall(r'\d+', s) if int(x) > 0]
@@ -624,7 +572,6 @@ def extract_recent_top3_simple(musique):
         return 0
 
 def calculate_weighted_perf_simple(musique):
-    """Calcule la performance pondérée simplement"""
     try:
         s = str(musique)
         digits = [int(x) for x in re.findall(r'\d+', s) if int(x) > 0]
@@ -637,7 +584,6 @@ def calculate_weighted_perf_simple(musique):
         return 0.0
 
 def prepare_training_data(df):
-    """Prépare les données pour l'entraînement"""
     feature_cols = ['odds_numeric', 'draw_numeric', 'weight_kg', 'age', 'is_female', 
                    'recent_wins', 'recent_top3', 'recent_weighted']
     
@@ -650,7 +596,6 @@ def prepare_training_data(df):
     return X, y
 
 def display_race_results(df_features, value_bets_df):
-    """Affiche les résultats de la course"""
     st.subheader("🎯 Classement Prédictif")
     
     if 'predicted_prob' in df_features.columns:
@@ -697,7 +642,6 @@ def display_race_results(df_features, value_bets_df):
         st.info("🔍 Aucun value bet détecté avec les critères actuels")
 
 def display_value_bets_analysis():
-    """Affiche l'analyse des value bets"""
     st.header("🎯 Analyse Value Bets")
     st.info("Les value bets détectés apparaîtront ici après l'analyse d'une course")
     
@@ -710,7 +654,6 @@ def display_value_bets_analysis():
         st.metric("ROI Potentiel", "+8-15%")
 
 def display_performance_analysis():
-    """Affiche l'analyse de performance"""
     st.header("📈 Analyse de Performance")
     st.info("Les statistiques de performance s'afficheront ici après plusieurs utilisations")
     
