@@ -113,7 +113,7 @@ class GenyScraper:
             if not any("N°" in h or "Chevaux" in h or "Cotes" in h for h in header_texts):
                 continue
 
-            rows = table.find_all('tr')[1:]
+            rows = table.find_all('tr')[1:]  # Skip header
 
             for row in rows:
                 cells = row.find_all(['td', 'th'])
@@ -121,24 +121,23 @@ class GenyScraper:
                     continue
 
                 try:
-                    num = self._clean_text(cells[1].get_text(strip=True))  # N°
-                    name = self._clean_text(cells[2].get_text(strip=True))  # Chevaux
-                    # Nettoyage renforcé du nom
+                    num = cells[1].get_text(strip=True)
+                    name = cells[2].get_text(strip=True)
+                    # Nettoyage du nom : supprimer retours à la ligne, espaces multiples
                     name = re.sub(r'\s+', ' ', name).strip()
-                    name = re.sub(r'^\s*([A-Z][a-zA-ZÀ-ÿ\s\-\.]+?)(?:\s+\d+|\s+[A-Z]\d+)?\s*$', r'\1', name)
-                    
-                    sa = self._clean_text(cells[3].get_text(strip=True))    # SA
-                    poids_text = self._clean_text(cells[4].get_text(strip=True))  # Poids
-                    # ⚠️ CORRECTION : Jockeys = index 5, Entraîneurs = index 6
-                    jockey = self._clean_text(cells[5].get_text(strip=True))      # Jockeys
-                    entraineur = self._clean_text(cells[6].get_text(strip=True))  # Entraîneurs
-                    cote_text = self._clean_text(cells[8].get_text(strip=True))   # Cotes
+                    sa = cells[3].get_text(strip=True)
+                    poids_text = cells[4].get_text(strip=True)
+                    jockey = cells[5].get_text(strip=True)
+                    entraineur = cells[6].get_text(strip=True)
+                    cote_text = cells[8].get_text(strip=True)
 
-                    poids = float(poids_text.replace(',', '.')) if poids_text.replace(',', '').replace('.', '').isdigit() else 60.0
+                    # Conversion du poids
+                    poids = float(poids_text.replace(',', '.')) if poids_text.replace(',', '').replace('.', '').replace(' ', '').isdigit() else 60.0
 
+                    # Conversion de la cote
                     cote = 10.0
                     if cote_text:
-                        cote_match = re.search(r'[\d,\.]+', cote_text.replace(' ', ''))
+                        cote_match = re.search(r'[\d,\.]+', cote_text)
                         if cote_match:
                             cote_str = cote_match.group().replace(',', '.')
                             try:
@@ -163,16 +162,16 @@ class GenyScraper:
                     horses_data.append(horse_data)
 
                 except Exception as e:
-                    st.warning(f"Erreur lors du parsing d'une ligne de tableau : {e}")
+                    st.warning(f"Erreur parsing ligne: {e}")
                     continue
 
-        # ✅ CORRECTION : "horses_data" au lieu de "horses_"
-        if horses :
+        # ✅ CORRECTION FINALE : "horses_data", pas "horses_"
+        if horses_data:
             df = pd.DataFrame(horses_data)
             df = df.drop_duplicates(subset=['Nom', 'Numéro de corde']).reset_index(drop=True)
             return df
         else:
-            st.warning("Aucun cheval extrait des tableaux. Utilisation des données de démonstration.")
+            st.warning("Aucun cheval extrait. Données de démonstration utilisées.")
             return self._get_demo_data()
 
     def _scrape_stats_page(self, soup):
@@ -202,7 +201,7 @@ class GenyScraper:
                     'Gains': 50000
                 }
                 horses_data.append(horse_data)
-        if horses :
+        if horses_data:
             return pd.DataFrame(horses_data)
         else:
             st.warning("Aucun cheval détecté, utilisation des données de démonstration")
@@ -223,8 +222,7 @@ class GenyScraper:
     def _get_demo_data(self):
         demo_horses = [
             "ETOILE ROYALE", "JOLIE FOLIE", "RAPIDE ESPOIR", "GANGOUILLE ROYALE", 
-            "ECLIPSE D'OR", "SUPERSTAR", "FLAMME D'OR", "TEMPETE ROYALE",
-            "PRINCE NOIR", "REINE DES CHAMPS", "VENT GLACIAL", "SOLEIL LEVANT"
+            "ECLIPSE D'OR", "SUPERSTAR", "FLAMME D'OR", "TEMPETE ROYALE"
         ]
         np.random.shuffle(demo_horses)
         selected_horses = demo_horses[:8]
@@ -416,64 +414,25 @@ def setup_streamlit_ui():
         text-align: center;
         margin-bottom: 1rem;
     }
-    .success-box {
-        background-color: #d4edda;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin: 1rem 0;
-    }
-    .warning-box {
-        background-color: #fff3cd;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin: 1rem 0;
-    }
     </style>
     """, unsafe_allow_html=True)
 
 def main():
     setup_streamlit_ui()
-    
-    st.markdown('<h1 class="main-header">🏇 SYSTÈME EXPERT HIPPIQUE PROFESSIONNEL</h1>', 
-                unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">🏇 SYSTÈME EXPERT HIPPIQUE PROFESSIONNEL</h1>', unsafe_allow_html=True)
     
     with st.sidebar:
         st.header("🎯 Configuration Pro")
-        
         url_input = st.text_input(
             "URL Geny:",
             value="https://www.geny.com/partants-pmu/2025-10-25-compiegne-pmu-prix-cerealiste_c1610603",
-            help="Collez une URL Geny de type partants-pmu ou stats-pmu"
+            help="Collez une URL Geny de type partants-pmu"
         )
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            auto_train = st.checkbox("Auto-training", value=True)
-            use_advanced_features = st.checkbox("Features avancées", value=True)
-        with col2:
-            detect_value_bets = st.checkbox("Value Bets", value=True)
-        
-        edge_threshold = st.slider(
-            "Seuil edge minimum (%)",
-            min_value=1.0, max_value=20.0, value=5.0, step=0.5
-        ) / 100
-        
-        st.info("💡 **Tips:**\n- Utilisez les URLs Geny 'partants-pmu'\n- Le système fonctionne même sans connexion")
+        auto_train = st.checkbox("Auto-training", value=True)
+        use_advanced_features = st.checkbox("Features avancées", value=True)
+        detect_value_bets = st.checkbox("Value Bets", value=True)
+        edge_threshold = st.slider("Seuil edge minimum (%)", 1.0, 20.0, 5.0, 0.5) / 100
 
-    tab1, tab2, tab3 = st.tabs(["📊 Course Actuelle", "🎯 Value Bets", "📈 Performance"])
-    
-    with tab1:
-        display_current_race_analysis(url_input, auto_train, use_advanced_features, detect_value_bets, edge_threshold)
-    
-    with tab2:
-        display_value_bets_analysis()
-    
-    with tab3:
-        display_performance_analysis()
-
-def display_current_race_analysis(url_input, auto_train, use_advanced_features, detect_value_bets, edge_threshold):
-    st.header("📊 Analyse Détaillée de la Course")
-    
     if st.button("🚀 Lancer l'Analyse", type="primary", use_container_width=True):
         with st.spinner("Analyse en cours..."):
             try:
@@ -481,44 +440,43 @@ def display_current_race_analysis(url_input, auto_train, use_advanced_features, 
                 df_race = scraper.scrape_geny_course(url_input)
                 
                 if not df_race.empty:
-                    st.success(f"✅ {len(df_race)} chevaux chargés avec succès")
-                    
-                    with st.expander("📋 Données brutes scrapées", expanded=True):
+                    st.success(f"✅ {len(df_race)} chevaux chargés")
+                    with st.expander("📋 Données brutes", expanded=False):
                         st.dataframe(df_race, use_container_width=True)
                     
                     feature_engineer = AdvancedFeatureEngineer()
-                    if use_advanced_features:
-                        df_features = feature_engineer.create_advanced_features(df_race)
-                    else:
-                        df_features = create_basic_features(df_race)
-                    
-                    with st.expander("🔧 Features calculées", expanded=False):
-                        feature_cols = [col for col in df_features.columns if col not in ['Nom', 'Jockey', 'Entraîneur', 'Musique', 'Âge/Sexe']]
-                        st.dataframe(df_features[['Nom'] + feature_cols], use_container_width=True)
+                    df_features = feature_engineer.create_advanced_features(df_race) if use_advanced_features else create_basic_features(df_race)
                     
                     if auto_train and len(df_features) >= 3:
                         model = AdvancedHybridModel()
                         X, y = prepare_training_data(df_features)
-                        
                         if len(X) >= 3:
                             model.train_ensemble(X, y)
                             predictions = model.predict_proba(X)
                             df_features['predicted_prob'] = predictions
-                            df_features['value_score'] = predictions / (1/df_features['odds_numeric'])
                             
-                            value_bets_df = None
                             if detect_value_bets:
-                                value_detector = ValueBetDetector(edge_threshold=edge_threshold)
-                                value_bets_df = value_detector.find_value_bets(df_features, predictions)
-                            
-                            display_race_results(df_features, value_bets_df)
+                                detector = ValueBetDetector(edge_threshold=edge_threshold)
+                                value_bets_df = detector.find_value_bets(df_features, predictions)
+                                if not value_bets_df.empty:
+                                    st.subheader("💰 Value Bets Détectés")
+                                    for _, bet in value_bets_df.iterrows():
+                                        st.markdown(f"""
+                                        <div style='background-color:#d4edda;padding:1rem;border-radius:0.5rem;margin:0.5rem 0;'>
+                                        <b>🏆 {bet['horse']}</b> — Cote: {bet['odds']}<br>
+                                        Edge: <b>+{bet['edge']}%</b> | EV: <b>+{bet['expected_value']}%</b>
+                                        </div>
+                                        """, unsafe_allow_html=True)
+                                else:
+                                    st.info("🔍 Aucun value bet détecté.")
+                            else:
+                                st.info("🎯 Détection des value bets désactivée.")
                         else:
-                            st.warning("Données insuffisantes pour l'entraînement")
+                            st.warning("Données insuffisantes pour l'entraînement.")
                     else:
-                        st.info("Auto-training désactivé")
-                        
+                        st.info("Auto-training désactivé.")
             except Exception as e:
-                st.error(f"❌ Erreur lors de l'analyse: {str(e)}")
+                st.error(f"❌ Erreur: {str(e)}")
 
 def create_basic_features(df):
     df = df.copy()
@@ -570,94 +528,11 @@ def calculate_weighted_perf_simple(musique):
 def prepare_training_data(df):
     feature_cols = ['odds_numeric', 'draw_numeric', 'weight_kg', 'age', 'is_female', 
                    'recent_wins', 'recent_top3', 'recent_weighted']
-    
     available_cols = [col for col in feature_cols if col in df.columns]
     X = df[available_cols].fillna(0)
-    
     y = 1 / (df['odds_numeric'] + 0.1)
     y = (y - y.min()) / (y.max() - y.min() + 1e-6)
-    
     return X, y
-
-def display_race_results(df_features, value_bets_df):
-    st.subheader("🎯 Classement Prédictif")
-    
-    if 'predicted_prob' in df_features.columns:
-        df_ranked = df_features.sort_values('predicted_prob', ascending=False)
-        
-        results_df = df_ranked[['Nom', 'Cote', 'predicted_prob', 'value_score', 'recent_wins', 'recent_top3']].copy()
-        results_df['Rang'] = range(1, len(results_df) + 1)
-        results_df['Probabilité (%)'] = (results_df['predicted_prob'] * 100).round(1)
-        results_df['Value Score'] = results_df['value_score'].round(2)
-        
-        st.dataframe(
-            results_df[['Rang', 'Nom', 'Cote', 'Probabilité (%)', 'Value Score', 'recent_wins', 'recent_top3']]
-            .rename(columns={
-                'recent_wins': 'Victoires', 
-                'recent_top3': 'Top3'
-            }),
-            use_container_width=True
-        )
-        
-        fig = px.bar(
-            df_ranked.head(8),
-            x='Nom',
-            y='predicted_prob',
-            title='Top 8 - Probabilités de Victoire',
-            color='predicted_prob',
-            color_continuous_scale='viridis'
-        )
-        fig.update_layout(yaxis_title='Probabilité', xaxis_title='Chevaux')
-        st.plotly_chart(fig, use_container_width=True)
-    
-    if value_bets_df is not None and not value_bets_df.empty:
-        st.subheader("💰 Value Bets Détectés")
-        
-        for _, bet in value_bets_df.iterrows():
-            with st.container():
-                st.markdown(f"""
-                <div style='background-color: #d4edda; padding: 1rem; border-radius: 0.5rem; margin: 0.5rem 0;'>
-                    <h4>🏆 {bet['horse']} - Cote: {bet['odds']}</h4>
-                    <p>📊 Edge: <b>+{bet['edge']}%</b> | EV: <b>+{bet['expected_value']}%</b> | Kelly: <b>{bet['kelly_fraction']}%</b></p>
-                    <p>🎯 Probabilité: Modèle {bet['model_prob']}% vs Marché {bet['market_prob']}%</p>
-                </div>
-                """, unsafe_allow_html=True)
-    else:
-        st.info("🔍 Aucun value bet détecté avec les critères actuels")
-
-def display_value_bets_analysis():
-    st.header("🎯 Analyse Value Bets")
-    st.info("Les value bets détectés apparaîtront ici après l'analyse d'une course")
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Edge Minimum", "5.0%")
-    with col2:
-        st.metric("Value Bets Typiques", "2-4")
-    with col3:
-        st.metric("ROI Potentiel", "+8-15%")
-
-def display_performance_analysis():
-    st.header("📈 Analyse de Performance")
-    st.info("Les statistiques de performance s'afficheront ici après plusieurs utilisations")
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("ROI Historique", "+7.2%")
-    with col2:
-        st.metric("Win Rate", "18.5%")
-    with col3:
-        st.metric("Pari Moyen", "€42.50")
-    
-    dates = pd.date_range(start='2024-01-01', periods=30, freq='D')
-    performance = np.cumsum(np.random.normal(2, 5, 30))
-    
-    fig = px.line(
-        x=dates, y=performance,
-        title="Évolution de la Bankroll",
-        labels={'x': 'Date', 'y': 'Gains (€)'}
-    )
-    st.plotly_chart(fig, use_container_width=True)
 
 if __name__ == "__main__":
     main()
