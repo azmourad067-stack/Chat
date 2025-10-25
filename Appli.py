@@ -172,7 +172,7 @@ class GenyScraper:
                     continue
 
         # ✅ CORRECTION ICI : "if horses_" au lieu de "if horses_"
-        if horses_
+        if horses :
             df = pd.DataFrame(horses_data)
             # Supprimer les doublons éventuels (plusieurs courses = mêmes numéros)
             df = df.drop_duplicates(subset=['Nom', 'Numéro de corde']).reset_index(drop=True)
