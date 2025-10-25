@@ -201,7 +201,7 @@ class GenyScraper:
                     'Gains': 50000
                 }
                 horses_data.append(horse_data)
-        if horses_data:
+        if horses_
             return pd.DataFrame(horses_data)
         else:
             st.warning("Aucun cheval détecté, utilisation des données de démonstration")
@@ -389,7 +389,18 @@ class ValueBetDetector:
                         'kelly_fraction': round(self.calculate_kelly_fraction(model_prob, row['Cote']) * 100, 1)
                     })
         
-        return pd.DataFrame(value_bets).sort_values('edge', ascending=False)
+        if len(value_bets) == 0:
+            return pd.DataFrame()
+        
+        df_result = pd.DataFrame(value_bets).sort_values('edge', ascending=False)
+        
+        # S'assurer que toutes les colonnes existent
+        required_cols = ['horse', 'odds', 'market_prob', 'model_prob', 'edge', 'expected_value', 'kelly_fraction']
+        for col in required_cols:
+            if col not in df_result.columns:
+                df_result[col] = np.nan
+        
+        return df_result
 
     def calculate_kelly_fraction(self, prob, odds):
         if odds <= 1:
@@ -458,15 +469,18 @@ def main():
                             if detect_value_bets:
                                 detector = ValueBetDetector(edge_threshold=edge_threshold)
                                 value_bets_df = detector.find_value_bets(df_features, predictions)
-                                if not value_bets_df.empty:
-                                    st.subheader("💰 Value Bets Détectés")
-                                    for _, bet in value_bets_df.iterrows():
-                                        st.markdown(f"""
-                                        <div style='background-color:#d4edda;padding:1rem;border-radius:0.5rem;margin:0.5rem 0;'>
-                                        <b>🏆 {bet['horse']}</b> — Cote: {bet['odds']}<br>
-                                        Edge: <b>+{bet['edge']}%</b> | EV: <b>+{bet['expected_value']}%</b>
-                                        </div>
-                                        """, unsafe_allow_html=True)
+                                if value_bets_df is not None and not value_bets_df.empty:
+                                    if 'edge' in value_bets_df.columns:
+                                        st.subheader("💰 Value Bets Détectés")
+                                        for _, bet in value_bets_df.iterrows():
+                                            st.markdown(f"""
+                                            <div style='background-color:#d4edda;padding:1rem;border-radius:0.5rem;margin:0.5rem 0;'>
+                                            <b>🏆 {bet['horse']}</b> — Cote: {bet['odds']}<br>
+                                            Edge: <b>+{bet['edge']}%</b> | EV: <b>+{bet['expected_value']}%</b>
+                                            </div>
+                                            """, unsafe_allow_html=True)
+                                    else:
+                                        st.warning("⚠️ Colonnes manquantes dans les value bets.")
                                 else:
                                     st.info("🔍 Aucun value bet détecté.")
                             else:
