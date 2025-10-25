@@ -212,7 +212,7 @@ class GenyScraper:
                 }
                 horses_data.append(horse_data)
         
-        if horses_
+        if horses :
             return pd.DataFrame(horses_data)
         else:
             st.warning("Aucun cheval détecté, utilisation des données de démonstration")
