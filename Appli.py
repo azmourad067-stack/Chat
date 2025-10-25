@@ -167,7 +167,7 @@ class GenyScraper:
                     continue
 
         # ✅ CORRECTION : "horses_data" au lieu de "horses_"
-        if horses_
+        if horses :
             df = pd.DataFrame(horses_data)
             df = df.drop_duplicates(subset=['Nom', 'Numéro de corde']).reset_index(drop=True)
             return df
