@@ -169,7 +169,7 @@ class GenyScraper:
                     st.warning(f"Erreur lors du parsing d'une ligne de tableau : {e}")
                     continue
 
-        if horses_
+        if horses :
             df = pd.DataFrame(horses_data)
             # Supprimer les doublons éventuels (plusieurs courses = mêmes numéros)
             df = df.drop_duplicates(subset=['Nom', 'Numéro de corde']).reset_index(drop=True)
