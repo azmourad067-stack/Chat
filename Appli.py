@@ -167,7 +167,7 @@ class GenyScraper:
                     continue
 
         # ✅ CORRECTION : "horses_data" au lieu de "horses_"
-        if horses_data:
+        if horses_
             df = pd.DataFrame(horses_data)
             df = df.drop_duplicates(subset=['Nom', 'Numéro de corde']).reset_index(drop=True)
             return df
@@ -202,7 +202,7 @@ class GenyScraper:
                     'Gains': 50000
                 }
                 horses_data.append(horse_data)
-        if horses_data:
+        if horses_
             return pd.DataFrame(horses_data)
         else:
             st.warning("Aucun cheval détecté, utilisation des données de démonstration")
