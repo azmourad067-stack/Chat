@@ -67,12 +67,10 @@ class GenyScraper:
     def scrape_geny_course(self, url):
         """Scrape une course Geny avec gestion robuste des URLs"""
         try:
-            # Validation de l'URL
             if not url or "geny.com" not in url:
                 st.warning("URL Geny non valide, utilisation des données de démonstration")
                 return self._get_demo_data()
             
-            # Nettoyage de l'URL
             if not url.startswith('http'):
                 url = 'https://' + url
             
@@ -104,20 +102,18 @@ class GenyScraper:
 
         horses_data = []
 
-        # Trouver tous les tableaux
         tables = soup.find_all('table')
         if not tables:
             st.warning("Aucun tableau trouvé sur la page.")
             return self._get_demo_data()
 
         for table in tables:
-            # Vérifier si le tableau contient les en-têtes attendus
             headers = table.find_all('th')
             header_texts = [th.get_text(strip=True) for th in headers]
             if not any("N°" in h or "Chevaux" in h or "Cotes" in h for h in header_texts):
                 continue
 
-            rows = table.find_all('tr')[1:]  # Ignorer la première ligne (en-tête)
+            rows = table.find_all('tr')[1:]
 
             for row in rows:
                 cells = row.find_all(['td', 'th'])
@@ -125,19 +121,21 @@ class GenyScraper:
                     continue
 
                 try:
-                    # Extraction des colonnes clés (basée sur la structure connue)
                     num = self._clean_text(cells[1].get_text(strip=True))  # N°
                     name = self._clean_text(cells[2].get_text(strip=True))  # Chevaux
+                    # Nettoyage renforcé du nom
+                    name = re.sub(r'\s+', ' ', name).strip()
+                    name = re.sub(r'^\s*([A-Z][a-zA-ZÀ-ÿ\s\-\.]+?)(?:\s+\d+|\s+[A-Z]\d+)?\s*$', r'\1', name)
+                    
                     sa = self._clean_text(cells[3].get_text(strip=True))    # SA
                     poids_text = self._clean_text(cells[4].get_text(strip=True))  # Poids
+                    # ⚠️ CORRECTION : Jockeys = index 5, Entraîneurs = index 6
                     jockey = self._clean_text(cells[5].get_text(strip=True))      # Jockeys
                     entraineur = self._clean_text(cells[6].get_text(strip=True))  # Entraîneurs
                     cote_text = self._clean_text(cells[8].get_text(strip=True))   # Cotes
 
-                    # Nettoyage et conversion du poids
                     poids = float(poids_text.replace(',', '.')) if poids_text.replace(',', '').replace('.', '').isdigit() else 60.0
 
-                    # Nettoyage et conversion de la cote (remplacer virgule par point)
                     cote = 10.0
                     if cote_text:
                         cote_match = re.search(r'[\d,\.]+', cote_text.replace(' ', ''))
@@ -148,10 +146,7 @@ class GenyScraper:
                             except ValueError:
                                 cote = 10.0
 
-                    # Gains estimés (optionnel, car non présents dans ce tableau)
                     gains = np.random.randint(20000, 200000)
-
-                    # Musique factice (non fournie ici, on la génère)
                     musique = self._generate_random_music()
 
                     horse_data = {
@@ -171,10 +166,9 @@ class GenyScraper:
                     st.warning(f"Erreur lors du parsing d'une ligne de tableau : {e}")
                     continue
 
-        # ✅ CORRECTION ICI : "if horses_data:" au lieu de "if horses_"
+        # ✅ CORRECTION : "horses_data" au lieu de "horses_"
         if horses_data:
             df = pd.DataFrame(horses_data)
-            # Supprimer les doublons éventuels (plusieurs courses = mêmes numéros)
             df = df.drop_duplicates(subset=['Nom', 'Numéro de corde']).reset_index(drop=True)
             return df
         else:
@@ -182,22 +176,17 @@ class GenyScraper:
             return self._get_demo_data()
 
     def _scrape_stats_page(self, soup):
-        """Scrape une page 'stats-pmu' Geny"""
         st.info("📊 Détection: Page Stats PMU")
         return self._scrape_generic_page(soup)
     
     def _scrape_generic_page(self, soup):
-        """Méthode générique de scraping pour toute page Geny"""
         st.info("🔍 Analyse générique de la page")
-        
         horses_data = []
         text_content = soup.get_text()
-        
         horse_patterns = [
             r'(\d+)\s+([A-Z][a-zA-ZÀ-ÿ\s\-\.\']+?)\s+(\d+\.\d+)',
             r'([A-Z][a-zA-ZÀ-ÿ\s\-\.\']+?)\s+(\d+\.\d+)',
         ]
-        
         for pattern in horse_patterns:
             matches = re.finditer(pattern, text_content)
             for match in matches:
@@ -213,7 +202,6 @@ class GenyScraper:
                     'Gains': 50000
                 }
                 horses_data.append(horse_data)
-        
         if horses_data:
             return pd.DataFrame(horses_data)
         else:
@@ -221,30 +209,25 @@ class GenyScraper:
             return self._get_demo_data()
     
     def _clean_text(self, s):
-        """Nettoie le texte"""
         if pd.isna(s) or s == "":
             return "INCONNU"
         s = re.sub(r'\s+', ' ', str(s)).strip()
         return re.sub(r'[^\w\s\-\'À-ÿ]', '', s)
     
     def _generate_random_music(self):
-        """Génère une musique aléatoire réaliste"""
         placements = []
         for _ in range(np.random.randint(3, 6)):
             placements.append(str(np.random.randint(1, 8)))
         return 'a'.join(placements)
     
     def _get_demo_data(self):
-        """Données de démonstration réalistes"""
         demo_horses = [
             "ETOILE ROYALE", "JOLIE FOLIE", "RAPIDE ESPOIR", "GANGOUILLE ROYALE", 
             "ECLIPSE D'OR", "SUPERSTAR", "FLAMME D'OR", "TEMPETE ROYALE",
             "PRINCE NOIR", "REINE DES CHAMPS", "VENT GLACIAL", "SOLEIL LEVANT"
         ]
-        
         np.random.shuffle(demo_horses)
         selected_horses = demo_horses[:8]
-        
         demo_data = []
         for i, name in enumerate(selected_horses, 1):
             demo_data.append({
@@ -258,7 +241,6 @@ class GenyScraper:
                 "Entraîneur": f"ENTR. {name.split()[-1][:4].upper()}",
                 "Gains": np.random.randint(30000, 250000)
             })
-        
         return pd.DataFrame(demo_data)
 
 # ---------------- Feature Engineering ----------------
@@ -297,6 +279,8 @@ class AdvancedFeatureEngineer:
     
     def _extract_age(self, age_sexe):
         try:
+            if pd.isna(age_sexe) or not isinstance(age_sexe, str):
+                return 5.0
             m = re.search(r"(\d+)", str(age_sexe))
             return float(m.group(1)) if m else 5.0
         except:
