@@ -1,7 +1,46 @@
-requests>=2.31.0
-beautifulsoup4>=4.12.0
-pandas>=2.0.0
-numpy>=1.24.0
-scikit-learn>=1.3.0
-lxml>=4.9.0
-html5lib>=1.1
+# ============================================================================
+# Requirements.txt - Analyseur Hippique ML v2.0
+# ============================================================================
+# Installation: pip install -r requirements.txt
+# ============================================================================
+
+# === FRAMEWORK WEB ===
+streamlit==1.31.0
+
+# === DATA MANIPULATION ===
+pandas==2.1.4
+numpy==1.26.3
+
+# === MACHINE LEARNING ===
+scikit-learn==1.4.0
+
+# === WEB SCRAPING ===
+requests==2.31.0
+beautifulsoup4==4.12.3
+lxml==5.1.0
+
+# === VISUALISATION ===
+plotly==5.18.0
+
+# === UTILITAIRES ===
+python-dateutil==2.8.2
+
+# ============================================================================
+# NOTES DE DÉPLOIEMENT
+# ============================================================================
+#
+# Pour Streamlit Cloud / Heroku / Railway :
+# - Ce fichier doit être à la racine du projet
+# - Python 3.9+ recommandé
+#
+# Pour Pydroid3 (Android) :
+# - Installer chaque package individuellement
+# - Commande: pip install streamlit pandas numpy scikit-learn plotly beautifulsoup4 requests
+#
+# Pour environnement virtuel local :
+# 1. python -m venv venv
+# 2. source venv/bin/activate  (Linux/Mac) ou venv\Scripts\activate (Windows)
+# 3. pip install -r requirements.txt
+#
+# Taille approximative: ~150 MB
+# ============================================================================
