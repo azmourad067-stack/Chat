@@ -7,6 +7,49 @@ import re
 import json
 from datetime import datetime
 import plotly.express as px
+# Vérification des imports
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+except ImportError as e:
+    st.error(f"""
+    ❌ Plotly n'est pas installé correctement.
+    
+    **Solution** :
+    1. Ajoutez `plotly>=5.17.0` dans requirements.txt
+    2. Installez avec : `pip install plotly`
+    3. Redémarrez l'application
+    
+    Erreur : {e}
+    """)
+    st.stop()
+```
+
+### **Solution 4 : Pour Streamlit Cloud (packages.txt)**
+
+Si `lxml` pose problème, créez un fichier **`packages.txt`** à la racine :
+```
+libxml2-dev
+libxslt-dev
+```
+
+## 📝 **Checklist de Débogage**
+
+- [ ] `requirements.txt` est à la racine du projet
+- [ ] Le fichier contient `plotly>=5.17.0`
+- [ ] Vous avez rebooté l'app sur Streamlit Cloud
+- [ ] Python version ≥ 3.9
+- [ ] Pas d'autres erreurs dans les logs
+
+## 🎯 **Structure du Projet Correcte**
+```
+votre-repo/
+├── app.py                 ← Script principal
+├── requirements.txt       ← OBLIGATOIRE à la racine
+├── packages.txt          ← Optionnel (dépendances système)
+└── .streamlit/
+    └── config.toml       ← Optionnel (configuration)
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
