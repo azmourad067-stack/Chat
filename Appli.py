@@ -6,1594 +6,745 @@ from bs4 import BeautifulSoup
 import re
 import json
 from datetime import datetime
-import plotly.express 
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-# ML & Deep Learning
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, VotingRegressor
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, LogisticRegression
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from sklearn.model_selection import cross_val_score, KFold, train_test_split
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error, mean_absolute_percentage_error
-from sklearn.neural_network import MLPRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, ExtraTreesRegressor
+from sklearn.linear_model import BayesianRidge, ElasticNet
+from sklearn.preprocessing import QuantileTransformer
+from sklearn.model_selection import cross_val_score, KFold, TimeSeriesSplit
+from sklearn.metrics import r2_score, mean_absolute_error
+from sklearn.isotonic import IsotonicRegression
+from scipy.special import softmax
 import warnings
 warnings.filterwarnings('ignore')
 
-st.set_page_config(page_title="🏇 Analyseur Hippique Pro ML v2", page_icon="🏇", layout="wide")
+st.set_page_config(page_title="🏇 Elite Horse Racing AI v2.0", page_icon="🏇", layout="wide")
 
-st.markdown("""
-<style>
-    .main-header {font-size: 2.8rem; color: #1e3a8a; text-align: center; margin-bottom: 1.5rem;}
-    .metric-card {background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 1rem; 
-                  border-radius: 10px; color: white; text-align: center; margin: 0.5rem 0;}
-    .prediction-box {border-left: 4px solid #f59e0b; padding: 0.8rem; background: #fffbeb; 
-                     margin: 0.8rem 0; border-radius: 6px;}
-    .confidence-high {color: #10b981; font-weight: bold;}
-    .confidence-medium {color: #f59e0b; font-weight: bold;}
-    .confidence-low {color: #ef4444; font-weight: bold;}
-    .feature-importance {background: #f0f9ff; padding: 1rem; border-radius: 8px; margin: 1rem 0;}
-</style>
-""", unsafe_allow_html=True)
+st.markdown("""<style>
+.main-header{font-size:3rem;color:#1e3a8a;text-align:center;margin-bottom:2rem;text-shadow:2px 2px 4px rgba(0,0,0,0.1)}
+.metric-card{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:1.2rem;border-radius:12px;color:white;text-align:center;margin:0.5rem 0;box-shadow:0 4px 6px rgba(0,0,0,0.1)}
+.prediction-box{border-left:5px solid #f59e0b;padding:1rem;background:linear-gradient(90deg,#fffbeb 0%,#fff 100%);margin:1rem 0;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.05)}
+.confidence-high{color:#10b981;font-weight:bold}
+.confidence-medium{color:#f59e0b;font-weight:bold}
+.confidence-low{color:#ef4444;font-weight:bold}
+</style>""", unsafe_allow_html=True)
 
-# ============================================================================
-# CONFIGURATION & CONSTANTES
-# ============================================================================
-
-RACE_CONFIGS = {
-    "PLAT": {"weight_importance": 0.25, "draw_advantage": [1, 2, 3, 4], "age_optimal": (4, 6)},
-    "ATTELE_AUTO": {"weight_importance": 0.05, "draw_advantage": [4, 5, 6], "age_optimal": (5, 8)},
-    "ATTELE_VOLTE": {"weight_importance": 0.05, "draw_advantage": [], "age_optimal": (5, 8)},
-    "OBSTACLE": {"weight_importance": 0.20, "draw_advantage": [], "age_optimal": (6, 10)}
+CONFIGS = {
+    "PLAT": {"description": "🏃 Galop - Handicap", "optimal_draws": [1,2,3,4], "weight_importance": 0.25, "age_peak": [4,5,6]},
+    "ATTELE_AUTOSTART": {"description": "🚗 Trot autostart", "optimal_draws": [4,5,6], "weight_importance": 0.05, "age_peak": [5,6,7]},
+    "ATTELE_VOLTE": {"description": "🔄 Trot volté", "optimal_draws": [], "weight_importance": 0.05, "age_peak": [5,6,7,8]},
+    "OBSTACLE": {"description": "🚧 Obstacles", "optimal_draws": [2,3,4], "weight_importance": 0.20, "age_peak": [6,7,8,9]}
 }
 
-# ============================================================================
-# EXTRACTEUR DE FEATURES AVANCÉ
-# ============================================================================
-
-class AdvancedFeatureExtractor:
-    """Extraction complète des features à partir des données brutes"""
-    
-    @staticmethod
-    def extract_music_stats(music_str):
-        """Analyse détaillée de la musique (historique de performances)"""
-        if pd.isna(music_str) or str(music_str).strip() == '':
-            return {
-                'total_races': 0, 'wins': 0, 'places_1_3': 0, 'places_1_5': 0,
-                'win_rate': 0, 'place_rate': 0, 'top5_rate': 0,
-                'recent_form_3': 0, 'recent_form_5': 0, 'recent_form_10': 0,
-                'consistency_score': 0, 'best_position': 20, 'worst_position': 20,
-                'avg_position': 10, 'median_position': 10, 'position_std': 10,
-                'improvement_trend': 0, 'consecutive_wins': 0, 'consecutive_places': 0,
-                'dns_dnf_rate': 0
-            }
-        
-        music = str(music_str).upper()
-        
-        # Extraction des positions numériques
-        positions = []
-        dns_dnf = 0
-        
-        for char in music:
-            if char.isdigit() and char != '0':
-                positions.append(int(char))
-            elif char in ['A', 'T', 'D']:  # Abandon, Tombé, Disqualifié
-                dns_dnf += 1
-        
-        if not positions:
-            positions = [20]  # Position par défaut si aucune donnée
-        
-        total = len(positions) + dns_dnf
-        wins = positions.count(1)
-        places_1_3 = sum(1 for p in positions if p <= 3)
-        places_1_5 = sum(1 for p in positions if p <= 5)
-        
-        # Forme récente pondérée (plus de poids aux courses récentes)
-        def weighted_form(positions_list, n):
-            recent = positions_list[:n]
-            if not recent:
-                return 0
-            weights = np.linspace(1, 0.5, len(recent))
-            scores = [1/p for p in recent]
-            return np.average(scores, weights=weights)
-        
-        recent_form_3 = weighted_form(positions, 3)
-        recent_form_5 = weighted_form(positions, 5)
-        recent_form_10 = weighted_form(positions, 10)
-        
-        # Tendance d'amélioration (régression linéaire sur les positions)
-        if len(positions) >= 3:
-            x = np.arange(len(positions))
-            slope = np.polyfit(x, positions, 1)[0]
-            improvement_trend = -slope  # Négatif = amélioration
-        else:
-            improvement_trend = 0
-        
-        # Séries de victoires/places consécutives
-        consecutive_wins = 0
-        consecutive_places = 0
-        for p in positions:
-            if p == 1:
-                consecutive_wins += 1
-            else:
-                break
-        for p in positions:
-            if p <= 3:
-                consecutive_places += 1
-            else:
-                break
-        
-        # Consistance (inverse de l'écart-type)
-        consistency = 1 / (np.std(positions) + 1) if len(positions) > 1 else 0
-        
-        return {
-            'total_races': total,
-            'wins': wins,
-            'places_1_3': places_1_3,
-            'places_1_5': places_1_5,
-            'win_rate': wins / total if total > 0 else 0,
-            'place_rate': places_1_3 / total if total > 0 else 0,
-            'top5_rate': places_1_5 / total if total > 0 else 0,
-            'recent_form_3': recent_form_3,
-            'recent_form_5': recent_form_5,
-            'recent_form_10': recent_form_10,
-            'consistency_score': consistency,
-            'best_position': min(positions) if positions else 20,
-            'worst_position': max(positions) if positions else 20,
-            'avg_position': np.mean(positions) if positions else 10,
-            'median_position': np.median(positions) if positions else 10,
-            'position_std': np.std(positions) if len(positions) > 1 else 10,
-            'improvement_trend': improvement_trend,
-            'consecutive_wins': consecutive_wins,
-            'consecutive_places': consecutive_places,
-            'dns_dnf_rate': dns_dnf / total if total > 0 else 0
-        }
-    
-    @staticmethod
-    def extract_age_sex_features(age_sex_str):
-        """Extraction âge et sexe avec features dérivées"""
-        if pd.isna(age_sex_str):
-            return {'age': 5, 'is_male': 0, 'is_female': 0, 'is_gelding': 0, 'age_category': 'mature'}
-        
-        age_sex = str(age_sex_str).upper()
-        age_match = re.search(r'(\d+)', age_sex)
-        age = int(age_match.group(1)) if age_match else 5
-        
-        is_male = 1 if 'H' in age_sex or 'M' in age_sex else 0
-        is_female = 1 if 'F' in age_sex or 'J' in age_sex else 0
-        is_gelding = 1 if 'H' in age_sex else 0
-        
-        if age <= 3:
-            age_category = 'young'
-        elif age <= 6:
-            age_category = 'mature'
-        else:
-            age_category = 'veteran'
-        
-        return {
-            'age': age,
-            'is_male': is_male,
-            'is_female': is_female,
-            'is_gelding': is_gelding,
-            'age_category': age_category
-        }
-    
-    @staticmethod
-    def create_comprehensive_features(df, race_type="PLAT"):
-        """Création de l'ensemble complet des features pour ML"""
-        features = pd.DataFrame(index=df.index)
-        config = RACE_CONFIGS.get(race_type, RACE_CONFIGS["PLAT"])
-        
-        # === FEATURES DE COTE (8 features) ===
-        features['odds'] = df['odds_numeric']
-        features['odds_inv'] = 1 / (df['odds_numeric'] + 0.1)
-        features['log_odds'] = np.log1p(df['odds_numeric'])
-        features['sqrt_odds'] = np.sqrt(df['odds_numeric'])
-        features['odds_squared'] = df['odds_numeric'] ** 2
-        features['odds_rank'] = df['odds_numeric'].rank()
-        features['odds_percentile'] = df['odds_numeric'].rank(pct=True)
-        features['odds_zscore'] = (df['odds_numeric'] - df['odds_numeric'].mean()) / (df['odds_numeric'].std() + 1e-6)
-        
-        # === FEATURES DE POSITION/NUMÉRO (6 features) ===
-        features['draw'] = df['draw_numeric']
-        features['draw_normalized'] = df['draw_numeric'] / (df['draw_numeric'].max() + 1)
-        features['draw_rank'] = df['draw_numeric'].rank()
-        
-        optimal_draws = config['draw_advantage']
-        features['is_optimal_draw'] = df['draw_numeric'].apply(lambda x: 1 if x in optimal_draws else 0)
-        features['draw_distance_optimal'] = df['draw_numeric'].apply(
-            lambda x: min([abs(x - opt) for opt in optimal_draws]) if optimal_draws else 0
-        )
-        features['draw_advantage_score'] = features['is_optimal_draw'] * (1 - features['draw_normalized'])
-        
-        # === FEATURES DE POIDS (8 features) ===
-        features['weight'] = df['weight_kg']
-        features['weight_normalized'] = (df['weight_kg'] - df['weight_kg'].mean()) / (df['weight_kg'].std() + 1e-6)
-        features['weight_rank'] = df['weight_kg'].rank()
-        features['weight_percentile'] = df['weight_kg'].rank(pct=True)
-        features['weight_advantage'] = (df['weight_kg'].max() - df['weight_kg']) * config['weight_importance']
-        features['weight_zscore'] = (df['weight_kg'] - df['weight_kg'].mean()) / (df['weight_kg'].std() + 1e-6)
-        features['is_light_weight'] = (df['weight_kg'] < df['weight_kg'].quantile(0.25)).astype(int)
-        features['is_heavy_weight'] = (df['weight_kg'] > df['weight_kg'].quantile(0.75)).astype(int)
-        
-        # === FEATURES DE MUSIQUE (20 features) ===
-        if 'Musique' in df.columns:
-            music_stats = df['Musique'].apply(AdvancedFeatureExtractor.extract_music_stats)
-            for key in music_stats.iloc[0].keys():
-                features[f'music_{key}'] = [m[key] for m in music_stats]
-        else:
-            default_music = AdvancedFeatureExtractor.extract_music_stats('')
-            for key in default_music.keys():
-                features[f'music_{key}'] = default_music[key]
-        
-        # === FEATURES D'ÂGE ET SEXE (5 features + catégorielles) ===
-        if 'Âge/Sexe' in df.columns:
-            age_sex_stats = df['Âge/Sexe'].apply(AdvancedFeatureExtractor.extract_age_sex_features)
-            for key in ['age', 'is_male', 'is_female', 'is_gelding']:
-                features[key] = [m[key] for m in age_sex_stats]
-            
-            features['age_squared'] = features['age'] ** 2
-            features['age_optimal'] = features['age'].apply(
-                lambda x: 1 if config['age_optimal'][0] <= x <= config['age_optimal'][1] else 0
-            )
-            features['age_normalized'] = (features['age'] - features['age'].mean()) / (features['age'].std() + 1e-6)
-        else:
-            features['age'] = 5
-            features['is_male'] = 0
-            features['is_female'] = 0
-            features['is_gelding'] = 0
-            features['age_squared'] = 25
-            features['age_optimal'] = 1
-            features['age_normalized'] = 0
-        
-        # === FEATURES D'INTERACTION (15 features) ===
-        features['odds_draw_interaction'] = features['odds_inv'] * features['draw_normalized']
-        features['odds_weight_interaction'] = features['log_odds'] * features['weight_normalized']
-        features['odds_age_interaction'] = features['odds_inv'] * features['age_normalized']
-        features['weight_age_interaction'] = features['weight_normalized'] * features['age_normalized']
-        features['form_odds_interaction'] = features['music_recent_form_3'] * features['odds_inv']
-        features['form_weight_interaction'] = features['music_recent_form_3'] * features['weight_advantage']
-        features['consistency_odds_interaction'] = features['music_consistency_score'] * features['odds_inv']
-        features['winrate_odds_interaction'] = features['music_win_rate'] * features['odds_inv']
-        features['recent_form_draw'] = features['music_recent_form_5'] * features['draw_advantage_score']
-        features['age_optimal_odds'] = features['age_optimal'] * features['odds_inv']
-        features['weight_form_combo'] = features['weight_advantage'] * features['music_place_rate']
-        features['triple_interaction'] = features['odds_inv'] * features['music_recent_form_3'] * features['weight_advantage']
-        features['experience_age_ratio'] = features['music_total_races'] / (features['age'] + 1)
-        features['quality_index'] = features['music_win_rate'] * features['music_consistency_score'] * features['odds_inv']
-        features['composite_performance'] = (
-            features['music_recent_form_5'] * 0.3 +
-            features['music_win_rate'] * 0.25 +
-            features['music_place_rate'] * 0.25 +
-            features['music_consistency_score'] * 0.2
-        )
-        
-        # === FEATURES DE CONTEXTE (7 features) ===
-        features['field_size'] = len(df)
-        features['competitiveness_index'] = df['odds_numeric'].std() / (df['odds_numeric'].mean() + 1e-6)
-        features['is_favorite'] = (df['odds_numeric'] == df['odds_numeric'].min()).astype(int)
-        features['is_second_favorite'] = (df['odds_numeric'] == df['odds_numeric'].nsmallest(2).iloc[-1]).astype(int)
-        features['is_outsider'] = (df['odds_numeric'] > df['odds_numeric'].quantile(0.75)).astype(int)
-        features['relative_strength'] = features['odds_inv'] / features['odds_inv'].sum()
-        features['market_share'] = 1 / (df['odds_numeric'] * len(df))
-        
-        # === FEATURES STATISTIQUES AVANCÉES (5 features) ===
-        features['performance_volatility'] = features['music_position_std'] / (features['music_avg_position'] + 1)
-        features['risk_adjusted_performance'] = features['music_win_rate'] / (features['music_position_std'] + 1)
-        features['momentum_score'] = features['music_improvement_trend'] * features['music_recent_form_3']
-        features['reliability_score'] = (1 - features['music_dns_dnf_rate']) * features['music_consistency_score']
-        features['peak_performance_indicator'] = 1 / (features['music_best_position'] + 1)
-        
-        return features.fillna(0)
-
-# ============================================================================
-# MODÈLE ML AVANCÉ MULTI-ALGORITHMES
-# ============================================================================
-
 @st.cache_resource
-class EnhancedHorseRacingML:
-    """Système ML avancé avec multiples algorithmes et ensemble learning"""
-    
+class EliteHorseRacingML:
     def __init__(self):
         self.models = {}
-        self.ensemble = None
-        self.scaler = StandardScaler()
+        self.scaler = QuantileTransformer(output_distribution='normal')
         self.feature_importance = {}
         self.cv_scores = {}
-        self.best_model_name = None
-        self.is_trained = False
+        self.calibrator = None
+        self.feature_names = []
         
-        self._initialize_models()
-    
-    def _initialize_models(self):
-        """Initialisation de tous les modèles ML"""
+    def extract_music_features(self, music_str):
+        """Extraction optimisée de 26 features d'historique"""
+        if pd.isna(music_str) or music_str == '':
+            return {k: 0 for k in ['wins','places','top5','total_races','win_rate','place_rate','top5_rate',
+                'recent_form','momentum','last_pos','last_3_avg','consistency','consistency_top3','pos_var','pos_std',
+                'best_pos','worst_pos','avg_pos','median_pos','p25','p75','win_streak','place_streak',
+                'win_place_ratio','top3_ratio','improvement_rate']}
         
-        # 1. Régression Ridge (régularisation L2)
-        self.models['Ridge'] = Ridge(alpha=1.0, random_state=42)
+        positions = [int(c) for c in str(music_str) if c.isdigit() and int(c) > 0]
+        if not positions:
+            return {k: 0 for k in ['wins','places','top5','total_races','win_rate','place_rate','top5_rate',
+                'recent_form','momentum','last_pos','last_3_avg','consistency','consistency_top3','pos_var','pos_std',
+                'best_pos','worst_pos','avg_pos','median_pos','p25','p75','win_streak','place_streak',
+                'win_place_ratio','top3_ratio','improvement_rate']}
         
-        # 2. Régression Lasso (régularisation L1, sélection de features)
-        self.models['Lasso'] = Lasso(alpha=0.1, random_state=42, max_iter=2000)
+        total = len(positions)
+        wins = positions.count(1)
+        places = sum(1 for p in positions if p <= 3)
+        top5 = sum(1 for p in positions if p <= 5)
         
-        # 3. ElasticNet (combinaison L1 + L2)
-        self.models['ElasticNet'] = ElasticNet(alpha=0.5, l1_ratio=0.5, random_state=42, max_iter=2000)
+        # Forme récente pondérée
+        weights = [0.4, 0.3, 0.2, 0.1]
+        recent = positions[:4]
+        recent_form = sum(w/p for w,p in zip(weights, recent)) if recent else 0
         
-        # 4. Random Forest (ensemble de décision)
-        self.models['RandomForest'] = RandomForestRegressor(
-            n_estimators=200,
-            max_depth=10,
-            min_samples_split=10,
-            min_samples_leaf=4,
-            max_features='sqrt',
-            random_state=42,
-            n_jobs=-1
-        )
+        # Momentum
+        momentum = (1/positions[0] - 1/positions[2]) if len(positions) >= 3 and positions[2] > 0 else 0
         
-        # 5. Gradient Boosting (boosting séquentiel)
-        self.models['GradientBoosting'] = GradientBoostingRegressor(
-            n_estimators=150,
-            learning_rate=0.05,
-            max_depth=6,
-            min_samples_split=10,
-            subsample=0.8,
-            random_state=42
-        )
+        # Régularité
+        consistency = 1/(np.std(positions)+1) if len(positions) > 1 else 0
+        top3_pos = [p for p in positions if p <= 3]
+        consistency_top3 = 1/(np.std(top3_pos)+1) if len(top3_pos) > 1 else 0
         
-        # 6. Réseau de Neurones (Deep Learning)
-        self.models['NeuralNetwork'] = MLPRegressor(
-            hidden_layer_sizes=(128, 64, 32, 16),
-            activation='relu',
-            solver='adam',
-            alpha=0.001,
-            batch_size=32,
-            learning_rate='adaptive',
-            learning_rate_init=0.001,
-            max_iter=500,
-            early_stopping=True,
-            validation_fraction=0.2,
-            random_state=42
-        )
-    
-    def create_synthetic_targets(self, X):
-        """Création de targets synthétiques réalistes basés sur les features"""
+        # Streaks
+        win_streak = place_streak = 0
+        for p in positions:
+            if p == 1: win_streak += 1
+            else: break
+        for p in positions:
+            if p <= 3: place_streak += 1
+            else: break
         
-        # Pondération basée sur la logique des courses hippiques
-        weights = {
-            'odds_inv': 0.30,                    # Cote inverse (30%)
-            'music_recent_form_3': 0.15,         # Forme récente (15%)
-            'music_win_rate': 0.12,              # Taux de victoire (12%)
-            'music_place_rate': 0.10,            # Taux de place (10%)
-            'weight_advantage': 0.08,            # Avantage de poids (8%)
-            'composite_performance': 0.08,       # Performance composite (8%)
-            'quality_index': 0.07,               # Index qualité (7%)
-            'consistency_score': 0.05,           # Consistance (5%)
-            'age_optimal': 0.03,                 # Âge optimal (3%)
-            'draw_advantage_score': 0.02         # Avantage position (2%)
+        return {
+            'wins': wins, 'places': places, 'top5': top5, 'total_races': total,
+            'win_rate': wins/total, 'place_rate': places/total, 'top5_rate': top5/total,
+            'recent_form': recent_form, 'momentum': momentum,
+            'last_pos': positions[0], 'last_3_avg': np.mean(positions[:3]) if len(positions)>=3 else np.mean(positions),
+            'consistency': consistency, 'consistency_top3': consistency_top3,
+            'pos_var': np.var(positions), 'pos_std': np.std(positions),
+            'best_pos': min(positions), 'worst_pos': max(positions), 
+            'avg_pos': np.mean(positions), 'median_pos': np.median(positions),
+            'p25': np.percentile(positions,25) if len(positions)>1 else positions[0],
+            'p75': np.percentile(positions,75) if len(positions)>1 else positions[0],
+            'win_streak': win_streak, 'place_streak': place_streak,
+            'win_place_ratio': wins/places if places>0 else 0,
+            'top3_ratio': places/total, 'improvement_rate': momentum/total if total>0 else 0
         }
-        
-        y_synthetic = np.zeros(len(X))
-        
-        for feature, weight in weights.items():
-            if feature in X.columns:
-                feature_norm = (X[feature] - X[feature].min()) / (X[feature].max() - X[feature].min() + 1e-6)
-                y_synthetic += feature_norm * weight
-        
-        # Ajout de bruit réaliste (± 5%)
-        noise = np.random.normal(0, 0.05, len(X))
-        y_synthetic += noise
-        
-        # Normalisation finale
-        y_synthetic = (y_synthetic - y_synthetic.min()) / (y_synthetic.max() - y_synthetic.min() + 1e-6)
-        
-        return y_synthetic
     
-    def train_with_cross_validation(self, X, y, cv_folds=5):
-        """Entraînement avec validation croisée pour tous les modèles"""
+    def prepare_elite_features(self, df, race_type="PLAT"):
+        """120+ features optimisées"""
+        f = pd.DataFrame()
+        cfg = CONFIGS[race_type]
+        field_size = len(df)
         
-        kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
+        # === COTE (15) ===
+        f['odds'] = df['odds_numeric']
+        f['odds_inv'] = 1/(df['odds_numeric']+0.01)
+        f['log_odds'] = np.log1p(df['odds_numeric'])
+        f['sqrt_odds'] = np.sqrt(df['odds_numeric'])
+        f['odds_sq'] = df['odds_numeric']**2
+        f['odds_rank'] = df['odds_numeric'].rank()
+        f['odds_pct'] = df['odds_numeric'].rank(pct=True)
+        f['odds_z'] = (df['odds_numeric']-df['odds_numeric'].mean())/(df['odds_numeric'].std()+1e-6)
+        f['odds_norm'] = (df['odds_numeric']-df['odds_numeric'].min())/(df['odds_numeric'].max()-df['odds_numeric'].min()+1e-6)
+        f['is_fav'] = (df['odds_numeric']==df['odds_numeric'].min()).astype(int)
+        f['is_2nd_fav'] = (df['odds_numeric']==df['odds_numeric'].nsmallest(2).iloc[-1]).astype(int)
+        f['is_outsider'] = (df['odds_numeric']>df['odds_numeric'].quantile(0.75)).astype(int)
+        f['odds_gap_fav'] = df['odds_numeric']-df['odds_numeric'].min()
+        f['odds_iqr'] = (df['odds_numeric']-df['odds_numeric'].quantile(0.25))/(df['odds_numeric'].quantile(0.75)-df['odds_numeric'].quantile(0.25)+1e-6)
+        f['odds_cubed'] = df['odds_numeric']**3
         
-        for name, model in self.models.items():
-            try:
-                # Validation croisée
-                scores = cross_val_score(
-                    model, X, y,
-                    cv=kf,
-                    scoring='neg_mean_squared_error',
-                    n_jobs=-1
-                )
-                
-                # Conversion en RMSE
-                rmse_scores = np.sqrt(-scores)
-                
-                # Calcul du R²
-                r2_scores = cross_val_score(model, X, y, cv=kf, scoring='r2', n_jobs=-1)
-                
-                self.cv_scores[name] = {
-                    'rmse_mean': rmse_scores.mean(),
-                    'rmse_std': rmse_scores.std(),
-                    'r2_mean': r2_scores.mean(),
-                    'r2_std': r2_scores.std(),
-                    'scores': rmse_scores
-                }
-                
-            except Exception as e:
-                st.warning(f"⚠️ Erreur CV pour {name}: {str(e)}")
-                self.cv_scores[name] = {
-                    'rmse_mean': 999,
-                    'rmse_std': 0,
-                    'r2_mean': 0,
-                    'r2_std': 0,
-                    'scores': [999]
-                }
-    
-    def train_all_models(self, X, y):
-        """Entraînement de tous les modèles"""
+        # === POSITION (20) ===
+        f['draw'] = df['draw_numeric']
+        f['draw_norm'] = df['draw_numeric']/(df['draw_numeric'].max()+1)
+        f['draw_rank'] = df['draw_numeric'].rank()
+        f['draw_z'] = (df['draw_numeric']-df['draw_numeric'].mean())/(df['draw_numeric'].std()+1e-6)
+        f['draw_sin'] = np.sin(2*np.pi*df['draw_numeric']/df['draw_numeric'].max())
+        f['draw_cos'] = np.cos(2*np.pi*df['draw_numeric']/df['draw_numeric'].max())
         
-        predictions_dict = {}
+        optimal = cfg['optimal_draws']
+        f['optimal_draw'] = df['draw_numeric'].apply(lambda x: 1 if x in optimal else 0)
+        f['draw_opt_score'] = df['draw_numeric'].apply(
+            lambda x: 1-(min([abs(x-o) for o in optimal])/df['draw_numeric'].max()) if optimal else 0.5
+        )
+        f['draw_dist_opt'] = df['draw_numeric'].apply(lambda x: min([abs(x-o) for o in optimal]) if optimal else 0)
+        f['is_inside'] = (df['draw_numeric']<=3).astype(int)
+        f['is_outside'] = (df['draw_numeric']>df['draw_numeric'].quantile(0.75)).astype(int)
+        f['is_middle'] = ((df['draw_numeric']>3)&(df['draw_numeric']<=df['draw_numeric'].quantile(0.75))).astype(int)
+        f['draw_field_ratio'] = df['draw_numeric']/field_size
+        f['draw_field_int'] = df['draw_numeric']*np.log1p(field_size)
+        f['rel_pos'] = (df['draw_numeric']-1)/(field_size-1) if field_size>1 else 0.5
         
-        for name, model in self.models.items():
-            try:
-                model.fit(X, y)
-                pred = model.predict(X)
-                predictions_dict[name] = pred
-                
-                # Extraction de l'importance des features
-                if hasattr(model, 'feature_importances_'):
-                    importance = dict(zip(X.columns, model.feature_importances_))
-                    top_features = dict(sorted(importance.items(), key=lambda x: x[1], reverse=True)[:15])
-                    self.feature_importance[name] = top_features
-                
-                elif hasattr(model, 'coef_'):
-                    importance = dict(zip(X.columns, np.abs(model.coef_)))
-                    top_features = dict(sorted(importance.items(), key=lambda x: x[1], reverse=True)[:15])
-                    self.feature_importance[name] = top_features
-                
-            except Exception as e:
-                st.warning(f"⚠️ Erreur entraînement {name}: {str(e)}")
-                predictions_dict[name] = np.zeros(len(X))
-        
-        return predictions_dict
-    
-    def create_ensemble_predictions(self, predictions_dict, cv_scores):
-        """Création de prédictions d'ensemble pondérées par performance"""
-        
-        # Pondération basée sur les scores de validation croisée
-        weights = {}
-        total_r2 = sum(score['r2_mean'] for score in cv_scores.values() if score['r2_mean'] > 0)
-        
-        if total_r2 > 0:
-            for name, score in cv_scores.items():
-                if score['r2_mean'] > 0:
-                    weights[name] = score['r2_mean'] / total_r2
-                else:
-                    weights[name] = 0
+        if field_size >= 3:
+            f['draw_tercile'] = pd.qcut(df['draw_numeric'], q=3, labels=False, duplicates='drop')
         else:
-            # Pondération uniforme si pas de bons scores
-            weights = {name: 1/len(predictions_dict) for name in predictions_dict}
+            f['draw_tercile'] = 1
         
-        # Calcul de la prédiction d'ensemble
-        ensemble_pred = np.zeros(len(list(predictions_dict.values())[0]))
+        f['draw_adv_score'] = f['optimal_draw']*f['draw_opt_score']
+        f['draw_penalty'] = (df['draw_numeric']>df['draw_numeric'].median()).astype(int)*0.1
+        f['extreme_draw'] = ((df['draw_numeric']<=2)|(df['draw_numeric']>=field_size-1)).astype(int)
+        f['draw_middle_adv'] = ((df['draw_numeric']>3)&(df['draw_numeric']<field_size-2)).astype(int)
         
-        for name, pred in predictions_dict.items():
-            ensemble_pred += pred * weights.get(name, 0)
+        # === POIDS (12) ===
+        f['weight'] = df['weight_kg']
+        f['weight_norm'] = (df['weight_kg']-df['weight_kg'].mean())/(df['weight_kg'].std()+1e-6)
+        f['weight_rank'] = df['weight_kg'].rank()
+        f['weight_pct'] = df['weight_kg'].rank(pct=True)
+        f['weight_z'] = (df['weight_kg']-df['weight_kg'].mean())/(df['weight_kg'].std()+1e-6)
         
-        # Détermination du meilleur modèle
-        best_model = max(cv_scores.items(), key=lambda x: x[1]['r2_mean'])
-        self.best_model_name = best_model[0]
+        w_imp = cfg['weight_importance']
+        f['weight_adv'] = (df['weight_kg'].max()-df['weight_kg'])*w_imp
+        f['weight_disadv'] = (df['weight_kg']-df['weight_kg'].min())*w_imp
+        f['weight_gap_min'] = df['weight_kg']-df['weight_kg'].min()
+        f['weight_gap_max'] = df['weight_kg'].max()-df['weight_kg']
+        f['weight_rel'] = (df['weight_kg']-df['weight_kg'].median())/df['weight_kg'].median()
+        f['is_lightest'] = (df['weight_kg']==df['weight_kg'].min()).astype(int)
+        f['is_heaviest'] = (df['weight_kg']==df['weight_kg'].max()).astype(int)
         
-        return ensemble_pred, weights
+        # === ÂGE & SEXE (15) ===
+        if 'Âge/Sexe' in df.columns:
+            f['age'] = df['Âge/Sexe'].str.extract('(\d+)').astype(float).fillna(4.5)
+            f['is_mare'] = df['Âge/Sexe'].str.contains('F',na=False).astype(int)
+            f['is_stallion'] = df['Âge/Sexe'].str.contains('H',na=False).astype(int)
+            f['is_gelding'] = df['Âge/Sexe'].str.contains('M',na=False).astype(int)
+        else:
+            f['age'] = 4.5
+            f['is_mare'] = f['is_stallion'] = f['is_gelding'] = 0
+        
+        f['age_sq'] = f['age']**2
+        f['age_cubed'] = f['age']**3
+        
+        age_peak = cfg['age_peak']
+        f['age_optimal'] = f['age'].apply(lambda x: 1 if x in age_peak else 0)
+        f['age_dist_opt'] = f['age'].apply(lambda x: min([abs(x-o) for o in age_peak]))
+        f['age_mat_score'] = f['age'].apply(lambda x: 1 if 4<=x<=8 else 0.5 if x==3 or x==9 else 0.3)
+        
+        f['young_mare'] = ((f['age']<=4)&(f['is_mare']==1)).astype(int)
+        f['exp_stallion'] = ((f['age']>=6)&(f['is_stallion']==1)).astype(int)
+        f['prime_age'] = ((f['age']>=4)&(f['age']<=6)).astype(int)
+        f['veteran'] = (f['age']>=8).astype(int)
+        f['rookie'] = (f['age']<=3).astype(int)
+        
+        # === MUSIQUE (26) ===
+        if 'Musique' in df.columns:
+            music = df['Musique'].apply(self.extract_music_features)
+            for k in music.iloc[0].keys():
+                f[f'music_{k}'] = [m[k] for m in music]
+        else:
+            for k in ['wins','places','top5','total_races','win_rate','place_rate','top5_rate',
+                'recent_form','momentum','last_pos','last_3_avg','consistency','consistency_top3','pos_var','pos_std',
+                'best_pos','worst_pos','avg_pos','median_pos','p25','p75','win_streak','place_streak',
+                'win_place_ratio','top3_ratio','improvement_rate']:
+                f[f'music_{k}'] = 0
+        
+        # === INTERACTIONS (30) ===
+        f['odds_draw'] = f['odds_inv']*f['draw_norm']
+        f['odds_weight'] = f['log_odds']*f['weight_norm']
+        f['odds_age'] = f['odds_inv']*f['age']
+        f['draw_weight'] = f['draw_norm']*f['weight_norm']
+        f['age_weight'] = f['age']*f['weight_norm']
+        f['age_draw'] = f['age']*f['draw_norm']
+        f['form_odds'] = f['music_recent_form']*f['odds_inv']
+        f['form_draw'] = f['music_recent_form']*f['draw_opt_score']
+        f['form_weight'] = f['music_recent_form']*f['weight_adv']
+        f['form_age'] = f['music_recent_form']*f['age_mat_score']
+        f['cons_odds'] = f['music_consistency']*f['odds_inv']
+        f['cons_weight'] = f['music_consistency']*f['weight_adv']
+        f['winrate_odds'] = f['music_win_rate']*f['odds_inv']
+        f['winrate_draw'] = f['music_win_rate']*f['draw_opt_score']
+        f['form_odds_draw'] = f['music_recent_form']*f['odds_inv']*f['draw_opt_score']
+        f['age_weight_draw'] = f['age_mat_score']*f['weight_adv']*f['draw_opt_score']
+        f['cons_form_odds'] = f['music_consistency']*f['music_recent_form']*f['odds_inv']
+        f['momentum_odds'] = f['music_momentum']*f['odds_inv']
+        f['momentum_draw'] = f['music_momentum']*f['draw_opt_score']
+        f['streak_odds'] = (f['music_win_streak']+f['music_place_streak'])*f['odds_inv']
+        f['mare_weight'] = f['is_mare']*f['weight_adv']
+        f['stallion_age'] = f['is_stallion']*f['age_mat_score']
+        f['gelding_cons'] = f['is_gelding']*f['music_consistency']
+        f['elite_score'] = f['odds_inv']*0.3 + f['music_win_rate']*0.25 + f['music_recent_form']*0.2 + f['age_mat_score']*0.15 + f['draw_opt_score']*0.1
+        f['class_indicator'] = (f['music_win_rate']>0.2).astype(int)*(f['odds']<10).astype(int)
+        f['form_consistency'] = f['music_recent_form']*f['music_consistency']
+        f['age_weight_sq'] = f['age']*f['weight']**2
+        f['odds_draw_weight'] = f['odds_inv']*f['draw_norm']*f['weight_norm']
+        f['total_advantage'] = f['weight_adv']+f['draw_opt_score']+f['age_mat_score']
+        f['experience_score'] = f['music_total_races']*f['music_win_rate']
+        
+        # === CONTEXTE (12) ===
+        f['field_size'] = field_size
+        f['log_field'] = np.log1p(field_size)
+        f['comp_index'] = df['odds_numeric'].std()/(df['odds_numeric'].mean()+1e-6)
+        f['odds_spread'] = df['odds_numeric'].max()-df['odds_numeric'].min()
+        f['odds_concentration'] = (df['odds_numeric']<=df['odds_numeric'].quantile(0.25)).sum()/field_size
+        f['fav_strength'] = df['odds_numeric'].min()/df['odds_numeric'].median()
+        f['outsider_count'] = (df['odds_numeric']>df['odds_numeric'].quantile(0.75)).sum()
+        f['balanced_field'] = (f['comp_index']<0.5).astype(int)
+        f['dominant_fav'] = (df['odds_numeric'].min()<3).astype(int)
+        f['open_race'] = (df['odds_numeric'].min()>5).astype(int)
+        f['avg_experience'] = f['music_total_races'].mean()
+        f['quality_field'] = (f['music_win_rate']>0.15).sum()/field_size
+        
+        self.feature_names = f.columns.tolist()
+        return f.fillna(0)
     
-    def calculate_prediction_confidence(self, predictions_dict, X):
-        """Calcul de la confiance dans les prédictions"""
-        
-        # Variance entre les prédictions des différents modèles
-        all_preds = np.array(list(predictions_dict.values()))
-        pred_variance = np.var(all_preds, axis=0)
-        
-        # Confiance inversement proportionnelle à la variance
-        confidence_base = 1 / (1 + pred_variance * 10)
-        
-        # Ajustement par la qualité des features
-        feature_quality = 1 - (X.isna().sum(axis=1) / len(X.columns))
-        
-        # Confiance finale
-        confidence = confidence_base * feature_quality.values
-        confidence = np.clip(confidence, 0.2, 1.0)  # Entre 20% et 100%
-        
-        return confidence
+    def build_models(self):
+        """5 modèles état-de-l'art"""
+        self.models = {
+            'rf': RandomForestRegressor(n_estimators=300, max_depth=10, min_samples_split=8, min_samples_leaf=3, max_features='sqrt', random_state=42, n_jobs=-1),
+            'et': ExtraTreesRegressor(n_estimators=300, max_depth=10, min_samples_split=8, min_samples_leaf=3, random_state=42, n_jobs=-1),
+            'gb': GradientBoostingRegressor(n_estimators=200, learning_rate=0.03, max_depth=6, min_samples_split=8, subsample=0.8, random_state=42),
+            'bayes': BayesianRidge(n_iter=300, alpha_1=1e-6, alpha_2=1e-6, lambda_1=1e-6, lambda_2=1e-6),
+            'elastic': ElasticNet(alpha=0.3, l1_ratio=0.5, max_iter=2000, random_state=42)
+        }
     
-    def fit_predict(self, X_raw, race_type="PLAT"):
-        """Pipeline complet : entraînement et prédiction"""
+    def create_target(self, X, df):
+        """Target synthétique optimisé"""
+        y = (X['odds_inv']*0.35 + X['music_win_rate']*0.20 + X['music_recent_form']*0.20 + 
+             X['music_consistency']*0.10 + X['weight_adv']*0.05 + X['draw_opt_score']*0.05 + 
+             X['age_mat_score']*0.05 + np.random.normal(0,0.03,len(X)))
         
-        if len(X_raw) < 5:
-            st.error("⚠️ Minimum 5 chevaux requis pour l'analyse ML")
-            return np.zeros(len(X_raw)), {}, np.ones(len(X_raw)) * 0.5
+        bonus = X['is_fav']*0.1 + (X['music_total_races']>5).astype(int)*0.05
+        y = y + bonus
+        return (y-y.min())/(y.max()-y.min()+1e-6)
+    
+    def train_and_predict(self, X, df, race_type="PLAT"):
+        """Entraînement & prédiction élite"""
+        if len(X) < 5:
+            return np.zeros(len(X)), {}, np.ones(len(X))*0.5
         
-        # Normalisation des features
-        X_scaled = pd.DataFrame(
-            self.scaler.fit_transform(X_raw),
-            columns=X_raw.columns,
-            index=X_raw.index
-        )
+        y = self.create_target(X, df)
+        X_scaled = self.scaler.fit_transform(X)
         
-        # Création des targets synthétiques
-        y_synthetic = self.create_synthetic_targets(X_raw)
+        # Validation
+        cv = TimeSeriesSplit(n_splits=3) if len(X)>=20 else KFold(n_splits=5, shuffle=True, random_state=42)
+        predictions = {}
         
-        # Validation croisée
-        with st.spinner("🔬 Validation croisée en cours..."):
-            self.train_with_cross_validation(X_scaled, y_synthetic)
+        for name, model in self.models.items():
+            try:
+                scores = cross_val_score(model, X_scaled, y, cv=cv, scoring='r2', n_jobs=-1)
+                mae = -cross_val_score(model, X_scaled, y, cv=cv, scoring='neg_mean_absolute_error', n_jobs=-1)
+                
+                self.cv_scores[name] = {
+                    'r2_mean': scores.mean(), 'r2_std': scores.std(),
+                    'mae_mean': mae.mean(), 'mae_std': mae.std()
+                }
+                
+                model.fit(X_scaled, y)
+                predictions[name] = model.predict(X_scaled)
+                
+                if hasattr(model, 'feature_importances_'):
+                    imp = dict(zip(self.feature_names, model.feature_importances_))
+                    self.feature_importance[name] = dict(sorted(imp.items(), key=lambda x: x[1], reverse=True)[:15])
+            
+            except Exception as e:
+                st.warning(f"⚠️ {name}: {e}")
+                predictions[name] = np.zeros(len(X))
+                self.cv_scores[name] = {'r2_mean':0,'r2_std':1,'mae_mean':1,'mae_std':1}
         
-        # Entraînement de tous les modèles
-        with st.spinner("🤖 Entraînement des modèles ML..."):
-            predictions_dict = self.train_all_models(X_scaled, y_synthetic)
+        # Ensemble pondéré
+        weights = {'rf': 0.30, 'et': 0.25, 'gb': 0.30, 'bayes': 0.10, 'elastic': 0.05}
+        final_pred = sum(predictions.get(n, np.zeros(len(X)))*w for n,w in weights.items())/sum(weights.values())
         
-        # Création de l'ensemble
-        ensemble_predictions, model_weights = self.create_ensemble_predictions(
-            predictions_dict, self.cv_scores
-        )
+        # Calibration
+        try:
+            self.calibrator = IsotonicRegression(out_of_bounds='clip')
+            self.calibrator.fit(final_pred, y)
+            final_pred = self.calibrator.predict(final_pred)
+        except:
+            pass
         
-        # Calcul de la confiance
-        confidence = self.calculate_prediction_confidence(predictions_dict, X_raw)
+        # Confiance multi-facteurs
+        pred_std = np.std(final_pred)
+        conf_var = 1/(1+pred_std*2)
+        feat_complete = 1-(X.isna().sum(axis=1)/len(X.columns))
+        history_conf = np.clip(X['music_total_races']/15, 0, 1)
+        pred_norm = (final_pred-final_pred.mean())/(final_pred.std()+1e-6)
+        conf_extreme = 1-np.abs(pred_norm)/3
         
-        self.is_trained = True
+        confidence = (conf_var*0.3 + feat_complete.values*0.3 + history_conf.values*0.25 + conf_extreme*0.15)
+        confidence = np.clip(confidence, 0, 1)
         
-        return ensemble_predictions, self.cv_scores, confidence
-
-# ============================================================================
-# FONCTIONS UTILITAIRES
-# ============================================================================
+        return final_pred, self.cv_scores, confidence
 
 @st.cache_data(ttl=300)
 def scrape_race_data(url):
-    """Web scraping des données de course"""
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        response = requests.get(url, headers=headers, timeout=10)
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        r = requests.get(url, headers=headers, timeout=10)
+        if r.status_code != 200:
+            return None, f"HTTP {r.status_code}"
         
-        if response.status_code != 200:
-            return None, f"Erreur HTTP {response.status_code}"
-
-        soup = BeautifulSoup(response.content, 'html.parser')
-        horses_data = []
-        
+        soup = BeautifulSoup(r.content, 'html.parser')
         table = soup.find('table')
         if not table:
-            return None, "Aucun tableau trouvé"
-            
-        rows = table.find_all('tr')[1:]
+            return None, "No table"
         
-        for row in rows:
-            cols = row.find_all(['td', 'th'])
+        data = []
+        for row in table.find_all('tr')[1:]:
+            cols = row.find_all(['td','th'])
             if len(cols) >= 4:
-                horses_data.append({
+                data.append({
                     "Numéro de corde": cols[0].get_text(strip=True),
                     "Nom": cols[1].get_text(strip=True),
                     "Cote": cols[-1].get_text(strip=True),
-                    "Poids": cols[-2].get_text(strip=True) if len(cols) > 4 else "60.0",
-                    "Musique": cols[2].get_text(strip=True) if len(cols) > 5 else "",
-                    "Âge/Sexe": cols[3].get_text(strip=True) if len(cols) > 6 else "",
+                    "Poids": cols[-2].get_text(strip=True) if len(cols)>4 else "60",
+                    "Musique": cols[2].get_text(strip=True) if len(cols)>5 else "",
+                    "Âge/Sexe": cols[3].get_text(strip=True) if len(cols)>6 else ""
                 })
-
-        if not horses_data:
-            return None, "Aucune donnée extraite"
-            
-        return pd.DataFrame(horses_data), "Succès"
         
+        return pd.DataFrame(data) if data else None, "Success" if data else "No data"
     except Exception as e:
-        return None, f"Erreur: {str(e)}"
+        return None, str(e)
 
-def safe_convert(value, convert_func, default=0):
-    """Conversion sécurisée avec gestion d'erreurs"""
+def safe_convert(v, func, default=0):
     try:
-        if pd.isna(value):
-            return default
-        cleaned = str(value).replace(',', '.').strip()
-        return convert_func(cleaned)
+        return func(str(v).replace(',','.').strip()) if not pd.isna(v) else default
     except:
         return default
 
 def prepare_data(df):
-    """Préparation et nettoyage des données"""
     df = df.copy()
     df['odds_numeric'] = df['Cote'].apply(lambda x: safe_convert(x, float, 999))
     df['draw_numeric'] = df['Numéro de corde'].apply(lambda x: safe_convert(x, int, 1))
     
-    def extract_weight(poids_str):
-        if pd.isna(poids_str):
-            return 60.0
-        match = re.search(r'(\d+(?:[.,]\d+)?)', str(poids_str))
-        return float(match.group(1).replace(',', '.')) if match else 60.0
+    def extract_weight(s):
+        if pd.isna(s): return 60.0
+        m = re.search(r'(\d+(?:[.,]\d+)?)', str(s))
+        return float(m.group(1).replace(',','.')) if m else 60.0
     
     df['weight_kg'] = df['Poids'].apply(extract_weight)
-    df = df[df['odds_numeric'] > 0]
-    df = df.reset_index(drop=True)
+    df = df[df['odds_numeric']>0].reset_index(drop=True)
     return df
 
 def auto_detect_race_type(df):
-    """Détection automatique du type de course"""
-    weight_std = df['weight_kg'].std()
-    weight_mean = df['weight_kg'].mean()
+    w_std = df['weight_kg'].std()
+    w_mean = df['weight_kg'].mean()
     
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("💪 Écart-type poids", f"{weight_std:.1f} kg")
-    with col2:
-        st.metric("⚖️ Poids moyen", f"{weight_mean:.1f} kg")
-    with col3:
-        st.metric("🏇 Nb chevaux", len(df))
+    col1,col2,col3 = st.columns(3)
+    col1.metric("💪 Écart poids", f"{w_std:.1f}kg")
+    col2.metric("⚖️ Poids moy", f"{w_mean:.1f}kg")
+    col3.metric("🏇 Chevaux", len(df))
     
-    if weight_std > 2.5:
+    if w_std > 2.5:
         detected = "PLAT"
-        reason = "Grande variation de poids (handicap)"
-    elif weight_mean > 65 and weight_std < 1.5:
-        detected = "ATTELE_AUTO"
-        reason = "Poids uniformes élevés (attelé)"
+        reason = "Grande variation poids"
+    elif w_mean > 65 and w_std < 1.5:
+        detected = "ATTELE_AUTOSTART"
+        reason = "Poids uniformes élevés"
     else:
         detected = "PLAT"
         reason = "Configuration par défaut"
     
-    st.info(f"🤖 **Type détecté**: {detected} | **Raison**: {reason}")
+    st.info(f"🤖 **Type**: {detected} | **Raison**: {reason}")
     return detected
 
-def generate_combinations(df_ranked, combination_type="quinte"):
-    """Génération de combinaisons gagnantes"""
-    top_horses = df_ranked.head(10)
-    
-    if combination_type == "quinte":
-        # Top 5 avec confiance
-        top_5 = top_horses.head(5)
-        return {
-            'type': 'Quinté+ Ordre',
-            'selection': list(top_5['Nom']),
-            'numeros': list(top_5['Numéro de corde']),
-            'confidence_avg': top_5['confidence'].mean()
-        }
-    
-    elif combination_type == "trio":
-        # Top 3
-        top_3 = top_horses.head(3)
-        return {
-            'type': 'e-Trio',
-            'selection': list(top_3['Nom']),
-            'numeros': list(top_3['Numéro de corde']),
-            'confidence_avg': top_3['confidence'].mean()
-        }
-    
-    elif combination_type == "super4":
-        # Top 4
-        top_4 = top_horses.head(4)
-        return {
-            'type': 'e-Super4',
-            'selection': list(top_4['Nom']),
-            'numeros': list(top_4['Numéro de corde']),
-            'confidence_avg': top_4['confidence'].mean()
-        }
-
-def create_advanced_visualizations(df_ranked, ml_model):
-    """Visualisations complètes des résultats ML"""
-    
+def create_visualizations(df, ml_model=None):
+    """Visualisations avancées"""
     fig = make_subplots(
-        rows=3, cols=3,
-        subplot_titles=(
-            '🏆 Scores de Prédiction',
-            '📊 Distribution Cotes',
-            '🧠 Importance Features (RF)',
-            '⚖️ Poids vs Performance',
-            '📈 Performances CV',
-            '🎯 Corrélation Cotes-Scores',
-            '🔥 Forme Récente Top 10',
-            '📉 Variance Prédictions',
-            '🎲 Analyse de Confiance'
-        ),
-        specs=[
-            [{"secondary_y": False}, {"type": "histogram"}, {"type": "bar"}],
-            [{"type": "scatter"}, {"type": "bar"}, {"type": "scatter"}],
-            [{"type": "bar"}, {"type": "box"}, {"type": "scatter"}]
-        ]
+        rows=2, cols=3,
+        subplot_titles=('🏆 Scores','📊 Cotes','🧠 Features','⚖️ Poids-Score','📈 CV','🎯 Corrélation'),
+        specs=[[{"secondary_y":False},{"type":"histogram"},{"type":"bar"}],
+               [{"type":"scatter"},{"type":"bar"},{"type":"scatter"}]]
     )
     
-    colors = px.colors.qualitative.Set3
+    colors = ['#667eea','#764ba2','#f59e0b','#10b981','#ef4444','#3b82f6']
     
-    # 1. Scores avec confiance
-    fig.add_trace(
-        go.Scatter(
-            x=df_ranked['rang'],
-            y=df_ranked['score_final'],
-            mode='markers+lines',
-            marker=dict(
-                size=df_ranked['confidence'] * 25,
-                color=df_ranked['confidence'],
-                colorscale='Viridis',
-                showscale=True,
-                colorbar=dict(title="Confiance", x=0.35)
-            ),
-            text=df_ranked['Nom'],
-            hovertemplate='<b>%{text}</b><br>Score: %{y:.3f}<br>Rang: %{x}',
-            name='Score ML'
-        ), row=1, col=1
-    )
+    # 1. Scores
+    if 'score_final' in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df['rang'], y=df['score_final'], mode='markers+lines',
+            marker=dict(size=df['confidence']*20 if 'confidence' in df.columns else 10,
+                       color=df['confidence'] if 'confidence' in df.columns else colors[0],
+                       colorscale='Viridis', showscale=True),
+            text=df['Nom'], name='Score'
+        ), row=1, col=1)
     
-    # 2. Distribution des cotes
-    fig.add_trace(
-        go.Histogram(
-            x=df_ranked['odds_numeric'],
-            nbinsx=15,
-            marker_color=colors[1],
-            name='Distribution'
-        ), row=1, col=2
-    )
+    # 2. Distribution cotes
+    fig.add_trace(go.Histogram(x=df['odds_numeric'], nbinsx=10, marker_color=colors[1], name='Cotes'), row=1, col=2)
     
-    # 3. Importance des features (Random Forest)
-    if ml_model.feature_importance and 'RandomForest' in ml_model.feature_importance:
-        importance = ml_model.feature_importance['RandomForest']
-        top_10 = dict(list(importance.items())[:10])
-        fig.add_trace(
-            go.Bar(
-                x=list(top_10.values()),
-                y=list(top_10.keys()),
-                orientation='h',
-                marker_color=colors[2],
-                name='Importance'
-            ), row=1, col=3
-        )
+    # 3. Feature importance
+    if ml_model and ml_model.feature_importance and 'rf' in ml_model.feature_importance:
+        imp = ml_model.feature_importance['rf']
+        fig.add_trace(go.Bar(x=list(imp.values()), y=list(imp.keys()), orientation='h', marker_color=colors[2], name='Importance'), row=1, col=3)
     
-    # 4. Poids vs Performance
-    fig.add_trace(
-        go.Scatter(
-            x=df_ranked['weight_kg'],
-            y=df_ranked['score_final'],
-            mode='markers',
-            marker=dict(
-                size=12,
-                color=df_ranked['rang'],
-                colorscale='RdYlGn_r',
-                showscale=False,
-                line=dict(width=1, color='white')
-            ),
-            text=df_ranked['Nom'],
-            hovertemplate='<b>%{text}</b><br>Poids: %{x} kg<br>Score: %{y:.3f}',
-            name='Poids-Score'
-        ), row=2, col=1
-    )
+    # 4. Poids vs Score
+    if 'score_final' in df.columns:
+        fig.add_trace(go.Scatter(x=df['weight_kg'], y=df['score_final'], mode='markers',
+            marker=dict(size=10, color=df['rang'], colorscale='RdYlGn_r'), text=df['Nom'], name='Poids-Score'), row=2, col=1)
     
-    # 5. Performances de validation croisée
-    if ml_model.cv_scores:
+    # 5. CV scores
+    if ml_model and ml_model.cv_scores:
         models = list(ml_model.cv_scores.keys())
-        r2_means = [ml_model.cv_scores[m]['r2_mean'] for m in models]
-        r2_stds = [ml_model.cv_scores[m]['r2_std'] for m in models]
-        
-        fig.add_trace(
-            go.Bar(
-                x=models,
-                y=r2_means,
-                error_y=dict(type='data', array=r2_stds),
-                marker_color=colors[4],
-                name='R² Score'
-            ), row=2, col=2
-        )
+        means = [ml_model.cv_scores[m]['r2_mean'] for m in models]
+        stds = [ml_model.cv_scores[m]['r2_std'] for m in models]
+        fig.add_trace(go.Bar(x=models, y=means, error_y=dict(type='data', array=stds), marker_color=colors[4], name='R² CV'), row=2, col=2)
     
-    # 6. Corrélation Cotes-Scores
-    fig.add_trace(
-        go.Scatter(
-            x=df_ranked['odds_numeric'],
-            y=df_ranked['score_final'],
-            mode='markers',
-            marker=dict(
-                size=10,
-                color=colors[5],
-                line=dict(width=1, color='white')
-            ),
-            text=df_ranked['Nom'],
-            hovertemplate='<b>%{text}</b><br>Cote: %{x}<br>Score: %{y:.3f}',
-            name='Corrélation'
-        ), row=2, col=3
-    )
+    # 6. Corrélation
+    if 'score_final' in df.columns:
+        fig.add_trace(go.Scatter(x=df['odds_numeric'], y=df['score_final'], mode='markers',
+            marker=dict(size=8, color=colors[5]), text=df['Nom'], name='Cotes-Score'), row=2, col=3)
     
-    # 7. Forme récente Top 10
-    top_10 = df_ranked.head(10)
-    fig.add_trace(
-        go.Bar(
-            x=top_10['Nom'],
-            y=top_10['music_recent_form_3'],
-            marker_color=colors[6],
-            name='Forme récente'
-        ), row=3, col=1
-    )
-    
-    # 8. Variance des prédictions (boxplot)
-    fig.add_trace(
-        go.Box(
-            y=df_ranked['score_final'],
-            marker_color=colors[7],
-            name='Distribution scores'
-        ), row=3, col=2
-    )
-    
-    # 9. Analyse de confiance
-    fig.add_trace(
-        go.Scatter(
-            x=df_ranked['odds_numeric'],
-            y=df_ranked['confidence'],
-            mode='markers',
-            marker=dict(
-                size=10,
-                color=df_ranked['score_final'],
-                colorscale='Plasma',
-                showscale=False,
-                line=dict(width=1, color='white')
-            ),
-            text=df_ranked['Nom'],
-            hovertemplate='<b>%{text}</b><br>Cote: %{x}<br>Confiance: %{y:.1%}',
-            name='Confiance'
-        ), row=3, col=3
-    )
-    
-    fig.update_layout(
-        height=1000,
-        showlegend=False,
-        title_text="📊 Dashboard Complet d'Analyse ML",
-        title_x=0.5,
-        title_font_size=22
-    )
-    
+    fig.update_layout(height=700, showlegend=True, title_text="📊 Analyse ML Complète", title_x=0.5)
     return fig
 
-def create_performance_report(df_ranked, ml_model, race_type):
-    """Génération d'un rapport détaillé de performance"""
-    
-    report = f"""
-╔═══════════════════════════════════════════════════════════════╗
-║           RAPPORT D'ANALYSE HIPPIQUE ML AVANCÉ               ║
-╚═══════════════════════════════════════════════════════════════╝
-
-📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-🏁 Type de course: {race_type}
-🏇 Nombre de partants: {len(df_ranked)}
-
-╔═══════════════════════════════════════════════════════════════╗
-║                    TOP 5 PRÉDICTIONS ML                       ║
-╚═══════════════════════════════════════════════════════════════╝
-
-"""
-    
-    for i in range(min(5, len(df_ranked))):
-        horse = df_ranked.iloc[i]
-        confidence_emoji = "🟢" if horse['confidence'] >= 0.7 else "🟡" if horse['confidence'] >= 0.4 else "🔴"
-        
-        report += f"""
-{i+1}. {horse['Nom'].upper()}
-   ├─ 📊 Cote: {horse['Cote']} | Numéro: {horse['Numéro de corde']}
-   ├─ 🎯 Score ML: {horse['score_final']:.4f}
-   ├─ {confidence_emoji} Confiance: {horse['confidence']:.1%}
-   ├─ ⚖️ Poids: {horse['weight_kg']} kg
-   ├─ 🏆 Victoires: {horse.get('music_wins', 'N/A')}
-   ├─ 📈 Forme récente: {horse.get('music_recent_form_3', 0):.3f}
-   └─ 🎲 Taux de victoire: {horse.get('music_win_rate', 0):.1%}
-"""
-    
-    if ml_model.cv_scores:
-        report += f"""
-╔═══════════════════════════════════════════════════════════════╗
-║              PERFORMANCES DES MODÈLES ML                      ║
-╚═══════════════════════════════════════════════════════════════╝
-
-"""
-        for model_name, scores in ml_model.cv_scores.items():
-            report += f"""
-{model_name}:
-   ├─ R² Score: {scores['r2_mean']:.4f} (± {scores['r2_std']:.4f})
-   ├─ RMSE: {scores['rmse_mean']:.4f} (± {scores['rmse_std']:.4f})
-   └─ Évaluation: {"Excellent" if scores['r2_mean'] > 0.8 else "Bon" if scores['r2_mean'] > 0.6 else "Modéré"}
-"""
-    
-    if ml_model.best_model_name:
-        report += f"""
-🏆 Meilleur modèle: {ml_model.best_model_name}
-
-"""
-    
-    # Statistiques globales
-    avg_confidence = df_ranked['confidence'].mean()
-    high_confidence = len(df_ranked[df_ranked['confidence'] >= 0.7])
-    
-    report += f"""
-╔═══════════════════════════════════════════════════════════════╗
-║                  STATISTIQUES GLOBALES                        ║
-╚═══════════════════════════════════════════════════════════════╝
-
-├─ 🎯 Confiance moyenne: {avg_confidence:.1%}
-├─ 🟢 Prédictions haute confiance (≥70%): {high_confidence}
-├─ ⭐ Favoris (cote < 5): {len(df_ranked[df_ranked['odds_numeric'] < 5])}
-├─ 🎲 Outsiders (cote > 15): {len(df_ranked[df_ranked['odds_numeric'] > 15])}
-└─ 📊 Indice de compétitivité: {df_ranked['odds_numeric'].std() / df_ranked['odds_numeric'].mean():.3f}
-
-╔═══════════════════════════════════════════════════════════════╗
-║                  RECOMMANDATIONS STRATÉGIQUES                 ║
-╚═══════════════════════════════════════════════════════════════╝
-
-"""
-    
-    # Chevaux à fort potentiel (bon score, cote intéressante, haute confiance)
-    value_horses = df_ranked[
-        (df_ranked['score_final'] > df_ranked['score_final'].quantile(0.6)) &
-        (df_ranked['odds_numeric'] > 5) &
-        (df_ranked['confidence'] > 0.5)
-    ].head(3)
-    
-    if len(value_horses) > 0:
-        report += "💎 CHEVAUX À VALEUR:\n"
-        for idx, horse in value_horses.iterrows():
-            report += f"   ✓ {horse['Nom']} - Cote: {horse['Cote']} | Score: {horse['score_final']:.3f}\n"
-    
-    # Alertes
-    weak_favorites = df_ranked[
-        (df_ranked['odds_numeric'] < 5) &
-        (df_ranked['score_final'] < df_ranked['score_final'].median())
-    ]
-    
-    if len(weak_favorites) > 0:
-        report += f"\n⚠️ ALERTES: {len(weak_favorites)} favori(s) avec score ML faible\n"
-    
-    report += "\n" + "═" * 67 + "\n"
-    report += "Note: Ce rapport est basé sur une analyse ML prédictive.\n"
-    report += "Les courses hippiques comportent toujours une part d'aléatoire.\n"
-    report += "═" * 67 + "\n"
-    
-    return report
-
-def generate_test_data(data_type="plat"):
-    """Génération de données de test réalistes"""
-    if data_type == "plat":
+def generate_sample_data(dtype="plat"):
+    if dtype == "plat":
         return pd.DataFrame({
-            'Nom': ['Golden Flash', 'Silver Storm', 'Bronze King', 'Diamond Star', 
-                    'Emerald Wave', 'Ruby Fire', 'Sapphire Sky', 'Pearl Ocean'],
-            'Numéro de corde': ['1', '2', '3', '4', '5', '6', '7', '8'],
-            'Cote': ['3.5', '5.2', '8.1', '6.8', '11.5', '15.2', '22.0', '18.5'],
-            'Poids': ['56.0', '57.5', '58.0', '59.5', '57.0', '60.5', '62.0', '61.0'],
-            'Musique': ['1a1a2a1a3a', '2a3a1a2a4a', '1a4a3a2a1a', '3a1a5a2a3a',
-                        '5a4a2a6a3a', '4a6a5a8a7a', '7a8a9a6a5a', '6a5a7a4a8a'],
-            'Âge/Sexe': ['4H', '5M', '3F', '6H', '4M', '5H', '7M', '4F']
+            'Nom': ['Thunder Bolt','Lightning Star','Storm King','Rain Dance','Wind Walker','Fire Dancer','Ocean Wave'],
+            'Numéro de corde': ['1','2','3','4','5','6','7'],
+            'Cote': ['3.2','4.8','7.5','6.2','9.1','12.5','15.0'],
+            'Poids': ['56.5','57.0','58.5','59.0','57.5','60.0','61.5'],
+            'Musique': ['1a2a3a1a','2a1a4a3a','3a3a1a2a','1a4a2a1a','4a2a5a3a','5a3a6a4a','6a5a7a8a'],
+            'Âge/Sexe': ['4H','5M','3F','6H','4M','5H','4F']
         })
-    elif data_type == "attele":
+    elif dtype == "attele":
         return pd.DataFrame({
-            'Nom': ['Thunder Bolt', 'Lightning Fast', 'Storm Chaser', 'Wind Runner',
-                    'Rain Maker', 'Cloud Dancer'],
-            'Numéro de corde': ['1', '2', '3', '4', '5', '6'],
-            'Cote': ['4.8', '7.2', '3.5', '9.5', '12.0', '16.5'],
-            'Poids': ['68.0', '68.0', '68.0', '68.0', '68.0', '68.0'],
-            'Musique': ['1a2a1a3a1a', '3a4a2a1a5a', '1a1a2a1a3a', '4a5a3a6a2a',
-                        '6a4a7a5a8a', '8a7a6a9a4a'],
-            'Âge/Sexe': ['5H', '6M', '4F', '7H', '5M', '6H']
+            'Nom': ['Rapide Éclair','Foudre Noire','Vent du Nord','Tempête Rouge','Orage Bleu','Cyclone Vert'],
+            'Numéro de corde': ['1','2','3','4','5','6'],
+            'Cote': ['4.2','8.5','15.0','3.8','6.8','10.2'],
+            'Poids': ['68.0','68.0','68.0','68.0','68.0','68.0'],
+            'Musique': ['2a1a4a1a','4a3a2a5a','6a5a8a7a','1a2a1a3a','3a4a5a2a','5a6a4a8a'],
+            'Âge/Sexe': ['5H','6M','4F','7H','5M','6H']
         })
-
-# ============================================================================
-# APPLICATION PRINCIPALE
-# ============================================================================
+    else:
+        return pd.DataFrame({
+            'Nom': ['Ace Impact','Torquator','Adayar','Tarnawa','Chrono','Mishriff','Love'],
+            'Numéro de corde': ['1','2','3','4','5','6','7'],
+            'Cote': ['3.2','4.8','7.5','6.2','9.1','5.5','11.0'],
+            'Poids': ['59.5','59.5','59.5','58.5','58.5','59.0','58.0'],
+            'Musique': ['1a1a2a1a','1a3a1a2a','2a1a4a1a','1a2a1a3a','3a1a2a1a','1a1a1a2a','2a3a1a4a'],
+            'Âge/Sexe': ['4H','5H','4H','5F','5F','5H','4F']
+        })
 
 def main():
-    st.markdown('<h1 class="main-header">🏇 Analyseur Hippique Pro ML v2.0</h1>', unsafe_allow_html=True)
-    st.markdown("**Système d'analyse prédictive avancé avec Machine Learning multi-algorithmes**")
-    st.markdown("*Régression, Deep Learning & Ensemble Methods*")
+    st.markdown('<h1 class="main-header">🏇 Elite Horse Racing AI v2.0</h1>', unsafe_allow_html=True)
+    st.markdown("*Prédictions avancées avec 120+ features et validation rigoureuse*")
     
-    # === SIDEBAR CONFIGURATION ===
     with st.sidebar:
-        st.header("⚙️ Configuration ML")
+        st.header("⚙️ Configuration")
+        race_type = st.selectbox("🏁 Type", ["AUTO","PLAT","ATTELE_AUTOSTART","ATTELE_VOLTE","OBSTACLE"])
+        use_ml = st.checkbox("✅ ML Avancé", value=True)
+        ml_weight = st.slider("🎯 Poids ML", 0.1, 0.9, 0.7, 0.05)
         
-        race_type_selection = st.selectbox(
-            "🏁 Type de course",
-            ["AUTO", "PLAT", "ATTELE_AUTO", "ATTELE_VOLTE", "OBSTACLE"]
-        )
+        st.subheader("🧠 Modèles")
+        st.info("✅ Random Forest (300)")
+        st.info("✅ Extra Trees (300)")
+        st.info("✅ Gradient Boosting (200)")
+        st.info("✅ Bayesian Ridge")
+        st.info("✅ Elastic Net")
+        st.info("✅ Calibration Isotonique")
         
-        use_ml = st.checkbox("✅ Activer ML Avancé", value=True)
-        
-        if use_ml:
-            ml_weight = st.slider(
-                "🎯 Pondération ML vs Cotes",
-                0.0, 1.0, 0.75, 0.05,
-                help="0 = uniquement cotes, 1 = uniquement ML"
-            )
-        else:
-            ml_weight = 0.0
-        
-        st.markdown("---")
-        st.subheader("🤖 Modèles Utilisés")
-        st.info("✅ Ridge Regression")
-        st.info("✅ Lasso Regression")
-        st.info("✅ ElasticNet")
-        st.info("✅ Random Forest (200 arbres)")
-        st.info("✅ Gradient Boosting")
-        st.info("✅ Neural Network (4 couches)")
-        
-        st.markdown("---")
-        st.subheader("📊 Features Générées")
-        st.success("**79 features** créées automatiquement:")
-        st.caption("• 8 features de cote")
-        st.caption("• 6 features de position")
-        st.caption("• 8 features de poids")
-        st.caption("• 20 features de musique")
-        st.caption("• 7 features âge/sexe")
-        st.caption("• 15 features d'interaction")
-        st.caption("• 7 features de contexte")
-        st.caption("• 5 features statistiques")
-        
-        st.markdown("---")
-        st.subheader("ℹ️ Informations")
-        st.info("🔬 **Méthode**: Validation croisée 5-fold")
-        st.info("🎯 **Objectif**: Prédire la performance relative")
-        st.info("📈 **Optimisation**: Ensemble learning")
+        st.subheader("📊 Features")
+        st.success("**120+ features** automatiques")
+        st.caption("15 cote | 20 position | 12 poids")
+        st.caption("15 âge/sexe | 26 historique")
+        st.caption("30 interactions | 12 contexte")
     
-    # === ONGLETS PRINCIPAUX ===
-    tab1, tab2, tab3 = st.tabs(["🌐 Analyse URL", "📁 Upload CSV", "🧪 Données Test"])
+    tab1, tab2, tab3 = st.tabs(["🌐 URL", "📁 CSV", "🧪 Test"])
     
     df_final = None
     
     with tab1:
-        st.subheader("🔍 Analyse d'URL de Course")
-        col1, col2 = st.columns([4, 1])
-        with col1:
-            url = st.text_input(
-                "🌐 URL de la course:",
-                placeholder="https://www.geny.fr/courses-pmu/..."
-            )
-        with col2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            analyze_btn = st.button("🔍 Analyser", type="primary", use_container_width=True)
-        
-        if analyze_btn and url:
-            with st.spinner("🔄 Extraction des données..."):
-                df, message = scrape_race_data(url)
+        st.subheader("🔍 Analyse URL")
+        url = st.text_input("🌐 URL:", placeholder="https://racing-site.com/race/123")
+        if st.button("🔍 Analyser", type="primary"):
+            with st.spinner("🔄 Extraction..."):
+                df, msg = scrape_race_data(url)
                 if df is not None:
                     st.success(f"✅ {len(df)} chevaux extraits")
-                    st.dataframe(df, use_container_width=True)
+                    st.dataframe(df.head(), use_container_width=True)
                     df_final = df
                 else:
-                    st.error(f"❌ {message}")
+                    st.error(f"❌ {msg}")
     
     with tab2:
-        st.subheader("📤 Upload de fichier CSV")
-        st.markdown("**Format requis**: `Nom, Numéro de corde, Cote, Poids, Musique, Âge/Sexe`")
-        
-        uploaded_file = st.file_uploader("Choisir un fichier CSV", type="csv")
-        if uploaded_file:
+        st.subheader("📤 Upload CSV")
+        uploaded = st.file_uploader("CSV", type="csv")
+        if uploaded:
             try:
-                df_final = pd.read_csv(uploaded_file)
-                st.success(f"✅ {len(df_final)} chevaux chargés")
-                st.dataframe(df_final, use_container_width=True)
+                df_final = pd.read_csv(uploaded)
+                st.success(f"✅ {len(df_final)} chevaux")
+                st.dataframe(df_final.head(), use_container_width=True)
             except Exception as e:
-                st.error(f"❌ Erreur: {e}")
+                st.error(f"❌ {e}")
     
     with tab3:
-        st.subheader("🧪 Données de Test")
-        
-        col1, col2 = st.columns(2)
+        st.subheader("🧪 Données Test")
+        col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("🏃 Test Course de PLAT", use_container_width=True):
-                df_final = generate_test_data("plat")
-                st.success("✅ 8 chevaux chargés (Course de PLAT)")
+            if st.button("🏃 Plat", use_container_width=True):
+                df_final = generate_sample_data("plat")
+                st.success("✅ PLAT (7 chevaux)")
         with col2:
-            if st.button("🚗 Test Course ATTELÉ", use_container_width=True):
-                df_final = generate_test_data("attele")
-                st.success("✅ 6 chevaux chargés (Trot Attelé)")
+            if st.button("🚗 Attelé", use_container_width=True):
+                df_final = generate_sample_data("attele")
+                st.success("✅ ATTELÉ (6 chevaux)")
+        with col3:
+            if st.button("⭐ Premium", use_container_width=True):
+                df_final = generate_sample_data("premium")
+                st.success("✅ PREMIUM (7 chevaux)")
         
         if df_final is not None:
             st.dataframe(df_final, use_container_width=True)
     
-    # === ANALYSE PRINCIPALE ===
+    # === ANALYSE ===
     if df_final is not None and len(df_final) > 0:
         st.markdown("---")
-        st.header("🎯 Analyse ML et Prédictions")
+        st.header("🎯 Analyse ML Elite")
         
-        # Préparation des données
-        df_prepared = prepare_data(df_final)
-        
-        if len(df_prepared) == 0:
+        df_prep = prepare_data(df_final)
+        if len(df_prep) == 0:
             st.error("❌ Aucune donnée valide")
             return
         
-        # Détection du type de course
-        if race_type_selection == "AUTO":
-            detected_type = auto_detect_race_type(df_prepared)
+        # Détection type
+        if race_type == "AUTO":
+            detected = auto_detect_race_type(df_prep)
         else:
-            detected_type = race_type_selection
-            config_desc = RACE_CONFIGS.get(detected_type, {}).get('description', 'Configuration personnalisée')
-            st.info(f"📋 **Type sélectionné**: {detected_type}")
+            detected = race_type
+            st.info(f"📋 **Type**: {CONFIGS[detected]['description']}")
         
-        # === EXTRACTION DES FEATURES ===
-        with st.spinner("🔬 Extraction des features avancées..."):
-            X_features = AdvancedFeatureExtractor.create_comprehensive_features(
-                df_prepared,
-                detected_type
-            )
-            df_prepared = pd.concat([df_prepared, X_features], axis=1)
-        
-        st.success(f"✅ **{len(X_features.columns)} features** créées avec succès")
-        
-        # === MACHINE LEARNING ===
-        ml_model = EnhancedHorseRacingML()
+        # === ML ===
+        ml_model = EliteHorseRacingML()
+        ml_model.build_models()
         
         if use_ml:
-            # Entraînement ML
-            ml_predictions, cv_scores, confidence = ml_model.fit_predict(
-                X_features,
-                detected_type
-            )
-            
-            # Normalisation
-            if ml_predictions.max() != ml_predictions.min():
-                ml_predictions_norm = (ml_predictions - ml_predictions.min()) / \
-                                     (ml_predictions.max() - ml_predictions.min())
-            else:
-                ml_predictions_norm = ml_predictions
-            
-            df_prepared['ml_score'] = ml_predictions_norm
-            df_prepared['confidence'] = confidence
-            
-            # Affichage des performances ML
-            st.markdown("### 📊 Performances des Modèles ML")
-            
-            cols = st.columns(len(cv_scores))
-            for idx, (model_name, scores) in enumerate(cv_scores.items()):
-                with cols[idx]:
-                    st.metric(
-                        model_name,
-                        f"R²: {scores['r2_mean']:.3f}",
-                        f"±{scores['r2_std']:.3f}",
-                        delta_color="normal"
-                    )
+            with st.spinner("🤖 Entraînement ML élite..."):
+                try:
+                    X_ml = ml_model.prepare_elite_features(df_prep, detected)
+                    st.info(f"🔬 **{len(X_ml.columns)} features** créées")
+                    
+                    ml_pred, ml_results, confidence = ml_model.train_and_predict(X_ml, df_prep, detected)
+                    
+                    if len(ml_pred) > 0 and ml_pred.max() != ml_pred.min():
+                        ml_pred = (ml_pred - ml_pred.min()) / (ml_pred.max() - ml_pred.min())
+                    
+                    df_prep['ml_score'] = ml_pred
+                    df_prep['confidence'] = confidence
+                    
+                    st.success("✅ ML entraîné")
+                    
+                    if ml_results:
+                        col1,col2,col3,col4 = st.columns(4)
+                        col1.metric("🌲 R² RF", f"{ml_results.get('rf',{}).get('r2_mean',0):.3f}")
+                        col2.metric("🚀 R² GB", f"{ml_results.get('gb',{}).get('r2_mean',0):.3f}")
+                        col3.metric("🎯 MAE Moy", f"{ml_results.get('rf',{}).get('mae_mean',0):.3f}")
+                        col4.metric("💪 Confiance", f"{confidence.mean():.1%}")
+                
+                except Exception as e:
+                    st.error(f"⚠️ Erreur ML: {e}")
+                    use_ml = False
         
-        # === SCORE TRADITIONNEL (BASÉ SUR LES COTES) ===
-        traditional_score = 1 / (df_prepared['odds_numeric'] + 0.1)
-        if traditional_score.max() != traditional_score.min():
-            traditional_score = (traditional_score - traditional_score.min()) / \
-                              (traditional_score.max() - traditional_score.min())
+        # Score traditionnel
+        trad_score = 1 / (df_prep['odds_numeric'] + 0.1)
+        if trad_score.max() != trad_score.min():
+            trad_score = (trad_score - trad_score.min()) / (trad_score.max() - trad_score.min())
         
-        # === SCORE FINAL (HYBRIDE) ===
-        if use_ml and 'ml_score' in df_prepared.columns:
-            df_prepared['score_final'] = (
-                (1 - ml_weight) * traditional_score +
-                ml_weight * df_prepared['ml_score']
-            )
+        # Score final
+        if use_ml and 'ml_score' in df_prep.columns:
+            df_prep['score_final'] = (1-ml_weight)*trad_score + ml_weight*df_prep['ml_score']
         else:
-            df_prepared['score_final'] = traditional_score
-            df_prepared['confidence'] = np.ones(len(df_prepared)) * 0.5
+            df_prep['score_final'] = trad_score
+            df_prep['confidence'] = np.ones(len(df_prep)) * 0.5
         
-        # === CLASSEMENT ===
-        df_ranked = df_prepared.sort_values('score_final', ascending=False).reset_index(drop=True)
-        df_ranked['rang'] = range(1, len(df_ranked) + 1)
+        # Classement
+        df_ranked = df_prep.sort_values('score_final', ascending=False).reset_index(drop=True)
+        df_ranked['rang'] = range(1, len(df_ranked)+1)
         
-        # === AFFICHAGE DES RÉSULTATS ===
+        # === RÉSULTATS ===
         st.markdown("---")
-        st.header("🏆 Classement Final & Pronostics")
-        
-        col1, col2 = st.columns([2.5, 1.5])
+        col1, col2 = st.columns([2,1])
         
         with col1:
-            st.subheader("📋 Classement Complet")
-            
-            # Préparation affichage
-            display_df = df_ranked[[
-                'rang', 'Nom', 'Numéro de corde', 'Cote',
-                'weight_kg', 'score_final', 'confidence'
-            ]].copy()
-            
-            display_df.columns = [
-                'Rang', 'Nom', 'N°', 'Cote',
-                'Poids (kg)', 'Score ML', 'Confiance'
-            ]
-            
-            display_df['Score ML'] = display_df['Score ML'].apply(lambda x: f"{x:.4f}")
-            display_df['Confiance'] = display_df['Confiance'].apply(lambda x: f"{x:.1%}")
-            display_df['Poids (kg)'] = display_df['Poids (kg)'].apply(lambda x: f"{x:.1f}")
-            
-            st.dataframe(
-                display_df,
-                use_container_width=True,
-                height=500
-            )
+            st.subheader("🏆 Classement Final")
+            display = df_ranked[['rang','Nom','Cote','Numéro de corde','Poids']].copy()
+            if 'score_final' in df_ranked.columns:
+                display['Score'] = df_ranked['score_final'].apply(lambda x: f"{x:.3f}")
+            if 'confidence' in df_ranked.columns:
+                display['Confiance'] = df_ranked['confidence'].apply(lambda x: f"{x:.1%}")
+            st.dataframe(display, use_container_width=True, height=400)
         
         with col2:
-            st.subheader("🎯 Top 5 Détaillé")
+            st.subheader("📊 Statistiques")
+            favoris = len(df_ranked[df_ranked['odds_numeric']<5])
+            outsiders = len(df_ranked[df_ranked['odds_numeric']>15])
+            avg_conf = df_ranked['confidence'].mean() if 'confidence' in df_ranked.columns else 0
             
+            st.markdown(f'<div class="metric-card">⭐ Favoris (cote<5)<br><strong>{favoris}</strong></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="metric-card">🎲 Outsiders (cote>15)<br><strong>{outsiders}</strong></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="metric-card">🎯 Confiance<br><strong>{avg_conf:.1%}</strong></div>', unsafe_allow_html=True)
+            
+            st.subheader("🥇 Top 5")
             for i in range(min(5, len(df_ranked))):
-                horse = df_ranked.iloc[i]
-                conf = horse['confidence']
+                h = df_ranked.iloc[i]
+                conf = h.get('confidence', 0.5)
                 
                 if conf >= 0.7:
-                    conf_class = "confidence-high"
-                    conf_emoji = "🟢"
+                    conf_class, emoji = "confidence-high", "🟢"
                 elif conf >= 0.4:
-                    conf_class = "confidence-medium"
-                    conf_emoji = "🟡"
+                    conf_class, emoji = "confidence-medium", "🟡"
                 else:
-                    conf_class = "confidence-low"
-                    conf_emoji = "🔴"
+                    conf_class, emoji = "confidence-low", "🔴"
                 
-                st.markdown(f"""
-                <div class="prediction-box">
-                    <strong style="font-size: 1.1em;">{i+1}. {horse['Nom']}</strong><br>
-                    📊 Cote: <strong>{horse['Cote']}</strong> | 
-                    🔢 N°: <strong>{horse['Numéro de corde']}</strong><br>
-                    🎯 Score ML: <strong>{horse['score_final']:.4f}</strong><br>
-                    {conf_emoji} Confiance: <span class="{conf_class}">{conf:.1%}</span><br>
-                    ⚖️ Poids: {horse['weight_kg']:.1f} kg<br>
-                    🏆 Victoires: {horse.get('music_wins', 0)} | 
-                    📈 Forme: {horse.get('music_recent_form_3', 0):.2f}
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Métriques globales
-            st.markdown("### 📊 Statistiques")
-            avg_conf = df_ranked['confidence'].mean()
-            st.metric("Confiance Moyenne", f"{avg_conf:.1%}")
-            
-            high_conf = len(df_ranked[df_ranked['confidence'] >= 0.7])
-            st.metric("Haute Confiance (≥70%)", high_conf)
-            
-            favorites = len(df_ranked[df_ranked['odds_numeric'] < 5])
-            st.metric("Favoris (cote < 5)", favorites)
+                st.markdown(f"""<div class="prediction-box">
+                    <strong>{i+1}. {h['Nom']}</strong><br>
+                    📊 Cote: <strong>{h['Cote']}</strong> | 🎯 Score: <strong>{h['score_final']:.3f}</strong><br>
+                    {emoji} Confiance: <span class="{conf_class}">{conf:.1%}</span>
+                </div>""", unsafe_allow_html=True)
         
-        # === COMBINAISONS GAGNANTES ===
+        # === VISUALISATIONS ===
         st.markdown("---")
-        st.subheader("🎲 Combinaisons Recommandées")
+        st.subheader("📊 Analyses Visuelles")
+        fig = create_visualizations(df_ranked, ml_model if use_ml else None)
+        st.plotly_chart(fig, use_container_width=True)
         
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            quinte = generate_combinations(df_ranked, "quinte")
-            st.markdown("**🏆 Quinté+ Ordre**")
-            st.info(f"Confiance: {quinte['confidence_avg']:.1%}")
-            for i, (name, num) in enumerate(zip(quinte['selection'], quinte['numeros']), 1):
-                st.write(f"{i}. **{name}** (N°{num})")
-        
-        with col2:
-            trio = generate_combinations(df_ranked, "trio")
-            st.markdown("**🥉 e-Trio**")
-            st.info(f"Confiance: {trio['confidence_avg']:.1%}")
-            for i, (name, num) in enumerate(zip(trio['selection'], trio['numeros']), 1):
-                st.write(f"{i}. **{name}** (N°{num})")
-        
-        with col3:
-            super4 = generate_combinations(df_ranked, "super4")
-            st.markdown("**⭐ e-Super4**")
-            st.info(f"Confiance: {super4['confidence_avg']:.1%}")
-            for i, (name, num) in enumerate(zip(super4['selection'], super4['numeros']), 1):
-                st.write(f"{i}. **{name}** (N°{num})")
-        
-        # === VISUALISATIONS AVANCÉES ===
-        st.markdown("---")
-        st.header("📊 Visualisations et Analytics")
-        
-        if use_ml:
-            fig = create_advanced_visualizations(df_ranked, ml_model)
-            st.plotly_chart(fig, use_container_width=True)
-        
-        # === ANALYSE DES FEATURES ===
+        # === FEATURE IMPORTANCE ===
         if use_ml and ml_model.feature_importance:
             st.markdown("---")
-            st.header("🔬 Analyse de l'Importance des Features")
-            
-            tab_rf, tab_gb, tab_nn = st.tabs([
-                "🌲 Random Forest",
-                "📈 Gradient Boosting",
-                "🧠 Comparaison"
-            ])
-            
-            with tab_rf:
-                if 'RandomForest' in ml_model.feature_importance:
-                    st.markdown("**Top 15 Features - Random Forest**")
-                    importance_df = pd.DataFrame(
-                        list(ml_model.feature_importance['RandomForest'].items()),
-                        columns=['Feature', 'Importance']
-                    ).sort_values('Importance', ascending=False)
-                    
-                    fig_rf = px.bar(
-                        importance_df,
-                        x='Importance',
-                        y='Feature',
-                        orientation='h',
-                        title='Importance des Features (Random Forest)',
-                        color='Importance',
-                        color_continuous_scale='Viridis'
-                    )
-                    st.plotly_chart(fig_rf, use_container_width=True)
-                    
-                    st.dataframe(importance_df, use_container_width=True, height=400)
-            
-            with tab_gb:
-                if 'GradientBoosting' in ml_model.feature_importance:
-                    st.markdown("**Top 15 Features - Gradient Boosting**")
-                    importance_df = pd.DataFrame(
-                        list(ml_model.feature_importance['GradientBoosting'].items()),
-                        columns=['Feature', 'Importance']
-                    ).sort_values('Importance', ascending=False)
-                    
-                    fig_gb = px.bar(
-                        importance_df,
-                        x='Importance',
-                        y='Feature',
-                        orientation='h',
-                        title='Importance des Features (Gradient Boosting)',
-                        color='Importance',
-                        color_continuous_scale='Plasma'
-                    )
-                    st.plotly_chart(fig_gb, use_container_width=True)
-                    
-                    st.dataframe(importance_df, use_container_width=True, height=400)
-            
-            with tab_nn:
-                st.markdown("**📊 Comparaison des Modèles**")
-                
-                if ml_model.cv_scores:
-                    comparison_data = []
-                    for model_name, scores in ml_model.cv_scores.items():
-                        comparison_data.append({
-                            'Modèle': model_name,
-                            'R² Moyen': scores['r2_mean'],
-                            'R² Std': scores['r2_std'],
-                            'RMSE Moyen': scores['rmse_mean'],
-                            'RMSE Std': scores['rmse_std']
-                        })
-                    
-                    comparison_df = pd.DataFrame(comparison_data)
-                    comparison_df = comparison_df.sort_values('R² Moyen', ascending=False)
-                    
-                    st.dataframe(
-                        comparison_df.style.format({
-                            'R² Moyen': '{:.4f}',
-                            'R² Std': '{:.4f}',
-                            'RMSE Moyen': '{:.4f}',
-                            'RMSE Std': '{:.4f}'
-                        }),
-                        use_container_width=True
-                    )
-                    
-                    # Graphique de comparaison
-                    fig_comp = go.Figure()
-                    
-                    fig_comp.add_trace(go.Bar(
-                        name='R² Score',
-                        x=comparison_df['Modèle'],
-                        y=comparison_df['R² Moyen'],
-                        error_y=dict(type='data', array=comparison_df['R² Std']),
-                        marker_color='lightblue'
-                    ))
-                    
-                    fig_comp.update_layout(
-                        title='Comparaison des Performances (R² Score)',
-                        xaxis_title='Modèle',
-                        yaxis_title='R² Score',
-                        height=400
-                    )
-                    
-                    st.plotly_chart(fig_comp, use_container_width=True)
-                    
-                    if ml_model.best_model_name:
-                        st.success(f"🏆 **Meilleur modèle**: {ml_model.best_model_name}")
+            st.subheader("🔬 Top Features par Modèle")
+            cols = st.columns(min(3, len(ml_model.feature_importance)))
+            for idx, (model, imp) in enumerate(list(ml_model.feature_importance.items())[:3]):
+                with cols[idx]:
+                    st.markdown(f"**{model.upper()}**")
+                    imp_df = pd.DataFrame(list(imp.items()), columns=['Feature','Importance']).head(10)
+                    st.dataframe(imp_df, use_container_width=True, height=300)
         
-        # === RECOMMANDATIONS STRATÉGIQUES ===
+        # === RECOMMANDATIONS ===
         st.markdown("---")
-        st.header("💡 Recommandations Stratégiques")
-        
+        st.subheader("💡 Recommandations")
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("#### 💎 Chevaux à Forte Valeur")
-            st.caption("Score élevé + Cote intéressante + Haute confiance")
+            st.markdown("**🎯 Potentiel Élevé**")
+            high_val = df_ranked[(df_ranked['score_final']>df_ranked['score_final'].quantile(0.6)) &
+                                  (df_ranked['odds_numeric']>5) &
+                                  (df_ranked['confidence']>0.5)].head(3)
             
-            value_horses = df_ranked[
-                (df_ranked['score_final'] > df_ranked['score_final'].quantile(0.6)) &
-                (df_ranked['odds_numeric'] > 5) &
-                (df_ranked['confidence'] > 0.5)
-            ].head(5)
-            
-            if len(value_horses) > 0:
-                for idx, horse in value_horses.iterrows():
-                    value_score = horse['score_final'] * horse['confidence'] * (1/horse['odds_numeric'])
-                    st.success(
-                        f"✅ **{horse['Nom']}** (N°{horse['Numéro de corde']}) - "
-                        f"Cote: {horse['Cote']} | Score: {horse['score_final']:.3f} | "
-                        f"Confiance: {horse['confidence']:.1%}"
-                    )
+            if len(high_val) > 0:
+                for _, h in high_val.iterrows():
+                    st.success(f"✅ **{h['Nom']}** - Cote: {h['Cote']} | Score: {h['score_final']:.3f}")
             else:
-                st.info("Aucun outsider à fort potentiel détecté")
+                st.info("Aucun outsider détecté")
         
         with col2:
-            st.markdown("#### ⚠️ Alertes et Observations")
+            st.markdown("**⚠️ Alertes**")
+            weak_fav = df_ranked[(df_ranked['odds_numeric']<5) & (df_ranked['score_final']<df_ranked['score_final'].median())]
+            if len(weak_fav) > 0:
+                st.warning(f"⚠️ {len(weak_fav)} favori(s) avec score faible")
             
-            # Favoris sous-performants
-            weak_favorites = df_ranked[
-                (df_ranked['odds_numeric'] < 5) &
-                (df_ranked['score_final'] < df_ranked['score_final'].median())
-            ]
-            
-            if len(weak_favorites) > 0:
-                st.warning(
-                    f"⚠️ **{len(weak_favorites)} favori(s) avec score ML faible**\n\n" +
-                    "\n".join([f"• {h['Nom']} (cote {h['Cote']})" for _, h in weak_favorites.iterrows()])
-                )
-            
-            # Surprises potentielles
-            surprise_horses = df_ranked[
-                (df_ranked['odds_numeric'] > 10) &
-                (df_ranked['rang'] <= 5)
-            ]
-            
-            if len(surprise_horses) > 0:
-                st.info(
-                    f"🎲 **{len(surprise_horses)} outsider(s) dans le Top 5 !**\n\n" +
-                    "\n".join([f"• {h['Nom']} (cote {h['Cote']}, rang {h['rang']})" 
-                              for _, h in surprise_horses.iterrows()])
-                )
-            
-            # Cohérence générale
-            top3_avg_odds = df_ranked.head(3)['odds_numeric'].mean()
-            if top3_avg_odds < 7:
-                st.success("✅ Classement cohérent avec le marché")
+            surprise = df_ranked[(df_ranked['odds_numeric']>10) & (df_ranked['rang']<=3)]
+            if len(surprise) > 0:
+                st.info(f"🎲 {len(surprise)} outsider(s) dans le Top 3!")
             else:
-                st.warning("🎯 Classement ML diverge du marché")
+                st.info("✅ Classement cohérent")
         
-        # === ANALYSE DE LA FORME ===
+        # === EXPORT ===
         st.markdown("---")
-        st.header("📈 Analyse de la Forme Récente")
-        
-        top_10_form = df_ranked.head(10)
-        
-        fig_form = go.Figure()
-        
-        fig_form.add_trace(go.Bar(
-            name='Forme 3 courses',
-            x=top_10_form['Nom'],
-            y=top_10_form['music_recent_form_3'],
-            marker_color='lightblue'
-        ))
-        
-        fig_form.add_trace(go.Bar(
-            name='Forme 5 courses',
-            x=top_10_form['Nom'],
-            y=top_10_form['music_recent_form_5'],
-            marker_color='lightcoral'
-        ))
-        
-        fig_form.update_layout(
-            title='Forme Récente - Top 10',
-            xaxis_title='Cheval',
-            yaxis_title='Score de Forme',
-            barmode='group',
-            height=400
-        )
-        
-        st.plotly_chart(fig_form, use_container_width=True)
-        
-        # === EXPORT DES RÉSULTATS ===
-        st.markdown("---")
-        st.header("💾 Export et Rapports")
-        
+        st.subheader("💾 Export")
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            # Export CSV
-            csv_export = df_ranked[[
-                'rang', 'Nom', 'Numéro de corde', 'Cote', 'weight_kg',
-                'score_final', 'confidence', 'music_wins', 'music_win_rate',
-                'music_recent_form_3', 'music_recent_form_5'
-            ]].copy()
-            
-            csv_data = csv_export.to_csv(index=False)
-            st.download_button(
-                "📄 Télécharger CSV Complet",
-                csv_data,
-                f"pronostics_ml_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                "text/csv",
-                use_container_width=True
-            )
+            csv = df_ranked.to_csv(index=False)
+            st.download_button("📄 CSV", csv, f"pronostic_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", "text/csv", use_container_width=True)
         
         with col2:
-            # Export JSON
-            json_export = df_ranked[[
-                'rang', 'Nom', 'Numéro de corde', 'Cote',
-                'score_final', 'confidence'
-            ]].to_dict('records')
-            
-            json_data = json.dumps(json_export, indent=2, ensure_ascii=False)
-            st.download_button(
-                "📋 Télécharger JSON",
-                json_data,
-                f"pronostics_ml_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                "application/json",
-                use_container_width=True
-            )
+            json_data = df_ranked.to_json(orient='records', indent=2)
+            st.download_button("📋 JSON", json_data, f"pronostic_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json", "application/json", use_container_width=True)
         
         with col3:
-            # Rapport complet
-            report = create_performance_report(df_ranked, ml_model, detected_type)
-            st.download_button(
-                "📊 Télécharger Rapport Complet",
-                report,
-                f"rapport_ml_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                "text/plain",
-                use_container_width=True
-            )
-        
-        # === SECTION EXPLICATIVE ===
-        st.markdown("---")
-        with st.expander("📚 **Comprendre l'Analyse ML**"):
-            st.markdown("""
-            ### 🎯 Méthodologie
+            report = f"""RAPPORT ELITE HORSE RACING AI
+{'='*50}
+Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Type: {detected}
+Chevaux: {len(df_ranked)}
+Features: {len(ml_model.feature_names) if use_ml else 0}
+
+TOP 5:
+{'-'*50}
+"""
+            for i in range(min(5, len(df_ranked))):
+                h = df_ranked.iloc[i]
+                report += f"{i+1}. {h['Nom']} - Cote: {h['Cote']} - Score: {h['score_final']:.3f} - Conf: {h.get('confidence',0):.1%}\n"
             
-            Notre système utilise une approche **multi-modèles** avec 6 algorithmes différents :
+            if use_ml and ml_results:
+                report += f"\n{'='*50}\nMÉTRIQUES ML:\n{'-'*50}\n"
+                for m, s in ml_results.items():
+                    report += f"{m}: R²={s['r2_mean']:.3f} (±{s['r2_std']:.3f}), MAE={s['mae_mean']:.3f}\n"
             
-            1. **Ridge Regression** : Régression linéaire avec régularisation L2
-            2. **Lasso Regression** : Régression avec sélection automatique de features (L1)
-            3. **ElasticNet** : Combinaison de Ridge et Lasso
-            4. **Random Forest** : Ensemble de 200 arbres de décision
-            5. **Gradient Boosting** : Boosting séquentiel pour amélioration progressive
-            6. **Neural Network** : Réseau de neurones profond (4 couches : 128→64→32→16)
-            
-            ### 📊 Features Utilisées (79 au total)
-            
-            **Cotes (8 features)** : Cote brute, inverse, log, racine carrée, rang, percentile, z-score
-            
-            **Position (6 features)** : Numéro de corde, avantage position, distance optimale
-            
-            **Poids (8 features)** : Poids brut, normalisé, rang, avantage, classification
-            
-            **Musique (20 features)** : Victoires, places, taux de réussite, forme récente (3/5/10 courses),
-            consistance, tendance d'amélioration, séries de victoires
-            
-            **Âge/Sexe (7 features)** : Âge, sexe, catégorie d'âge, âge optimal
-            
-            **Interactions (15 features)** : Combinaisons entre cotes, poids, âge, forme
-            
-            **Contexte (7 features)** : Taille du peloton, compétitivité, statut (favori/outsider)
-            
-            **Statistiques (5 features)** : Volatilité, performance ajustée au risque, momentum
-            
-            ### 🔬 Validation
-            
-            - **Cross-validation 5-fold** : Le modèle est testé sur 5 sous-ensembles différents
-            - **Métriques R²** : Mesure la qualité de prédiction (0 à 1, 1 = parfait)
-            - **RMSE** : Erreur quadratique moyenne
-            - **Ensemble Learning** : Combinaison pondérée des 6 modèles
-            
-            ### 🎲 Interprétation des Résultats
-            
-            - **Score ML** : Entre 0 et 1, plus élevé = meilleur potentiel
-            - **Confiance** : Fiabilité de la prédiction (🟢 ≥70%, 🟡 40-70%, 🔴 <40%)
-            - **Combinaisons** : Basées sur les chevaux les mieux classés avec haute confiance
-            
-            ### ⚠️ Avertissement
-            
-            Ce système est un **outil d'aide à la décision** basé sur des données statistiques.
-            Les courses hippiques comportent toujours une part d'aléatoire importante.
-            Utilisez ces prédictions comme un guide, pas comme une garantie.
-            """)
-        
-        with st.expander("🔧 **Détails Techniques**"):
-            st.markdown(f"""
-            ### 📈 Performances du Système
-            
-            **Nombre de features** : {len(X_features.columns)}
-            
-            **Nombre de chevaux analysés** : {len(df_ranked)}
-            
-            **Type de course** : {detected_type}
-            
-            **Pondération ML** : {ml_weight:.0%}
-            
-            ### 🤖 Configuration des Modèles
-            
-            - Random Forest : 200 estimateurs, profondeur max 10
-            - Gradient Boosting : 150 estimateurs, learning rate 0.05
-            - Neural Network : Architecture [128, 64, 32, 16]
-            - Validation : K-Fold avec k=5
-            - Scaling : StandardScaler
-            
-            ### 📊 Statistiques de Course
-            
-            - Cote moyenne : {df_ranked['odds_numeric'].mean():.2f}
-            - Cote min/max : {df_ranked['odds_numeric'].min():.1f} / {df_ranked['odds_numeric'].max():.1f}
-            - Poids moyen : {df_ranked['weight_kg'].mean():.1f} kg
-            - Confiance moyenne : {df_ranked['confidence'].mean():.1%}
-            """)
+            st.download_button("📊 Rapport", report, f"rapport_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt", "text/plain", use_container_width=True)
 
 if __name__ == "__main__":
     main()
