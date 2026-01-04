@@ -266,7 +266,7 @@ class EliteHorseRacingML:
             'rf': RandomForestRegressor(n_estimators=300, max_depth=10, min_samples_split=8, min_samples_leaf=3, max_features='sqrt', random_state=42, n_jobs=-1),
             'et': ExtraTreesRegressor(n_estimators=300, max_depth=10, min_samples_split=8, min_samples_leaf=3, random_state=42, n_jobs=-1),
             'gb': GradientBoostingRegressor(n_estimators=200, learning_rate=0.03, max_depth=6, min_samples_split=8, subsample=0.8, random_state=42),
-            'bayes': BayesianRidge(n_iter=300, alpha_1=1e-6, alpha_2=1e-6, lambda_1=1e-6, lambda_2=1e-6),
+            'bayes': BayesianRidge(max_iter=300, alpha_1=1e-6, alpha_2=1e-6, lambda_1=1e-6, lambda_2=1e-6),
             'elastic': ElasticNet(alpha=0.3, l1_ratio=0.5, max_iter=2000, random_state=42)
         }
     
